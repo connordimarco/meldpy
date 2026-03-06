@@ -1,0 +1,13 @@
+# Downloaded CDF/NetCDF source data
+cdf_temp/
+
+# Pipeline output data
+L1/
+
+# Plot outputs
+plots/
+
+# Python
+__pycache__/
+*.pyc
+.DS_Store
