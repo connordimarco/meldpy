@@ -7,6 +7,9 @@ L1/
 # Plot outputs
 plots/
 
+# Scratch / debug work
+scratch/
+
 # Python
 __pycache__/
 *.pyc

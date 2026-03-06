@@ -13,6 +13,18 @@ Five independent checks are applied:
   5. NaN-fraction check       — high missing-data rate in rolling window
   6. Near-zero clearing       — Uy/Uz pinned near zero (DSCOVR only)
 
+Checks 2 and 3 use separate threshold parameter dicts (_OUTLIER_PARAMS and
+_INTERSC_PARAMS respectively) because the right threshold differs by use case:
+
+  - _INTERSC_PARAMS uses a 2× ratio for rho/T.  This is the DSCOVR-only
+    pairwise check and needs to be tighter to catch sustained moderate
+    deviations (e.g. DSCOVR elevated by 1.5–2× for hours at a time).
+
+  - _OUTLIER_PARAMS uses a 3× ratio for rho/T.  This symmetric check applies
+    to all three satellites.  A 2× threshold here incorrectly flags ACE on
+    days where DSCOVR and WIND are both elevated — they "agree" at a bad value
+    and ACE appears to be the outlier.
+
 Main entry point: ``score_all_plasma()``.
 """
 
@@ -76,10 +88,24 @@ def check_flat_plateau(df_dsc, variables=None):
 # 2. Inter-spacecraft consistency check
 # ---------------------------------------------------------------------------
 
-# Maximum acceptable deviation between DSCOVR and the reference spacecraft
-# (ACE or WIND) over a rolling window.  Additive for velocity, multiplicative
-# (ratio) for density and temperature.
+# Thresholds for the DSCOVR-specific pairwise check (check_intersc_consistency).
+# rho and T use a 2× ratio — tighter than the outlier check — to catch days
+# where DSCOVR is persistently elevated by a moderate amount (1.5–2×) that
+# would stay below a 3× threshold for most of the rolling window.
 _INTERSC_PARAMS = {
+    'Ux':  {'mode': 'abs', 'threshold': 50.0,  'window': 31},
+    'Uy':  {'mode': 'abs', 'threshold': 30.0,  'window': 31},
+    'Uz':  {'mode': 'abs', 'threshold': 30.0,  'window': 31},
+    'rho': {'mode': 'ratio', 'threshold': 2.0,  'window': 61},
+    'T':   {'mode': 'ratio', 'threshold': 2.0,  'window': 31},
+}
+
+# Thresholds for the symmetric outlier check (check_outlier_satellite).
+# rho and T use 3× here — looser than _INTERSC_PARAMS — because this check
+# applies to all three satellites symmetrically.  Using 2× causes ACE to be
+# incorrectly flagged on days where DSCOVR and WIND are both elevated and
+# happen to agree with each other, making ACE look like the odd one out.
+_OUTLIER_PARAMS = {
     'Ux':  {'mode': 'abs', 'threshold': 50.0,  'window': 31},
     'Uy':  {'mode': 'abs', 'threshold': 30.0,  'window': 31},
     'Uz':  {'mode': 'abs', 'threshold': 30.0,  'window': 31},
@@ -169,7 +195,7 @@ def check_outlier_satellite(df_ace, df_dsc, df_wind, variables=None):
         ``result[sat_code][var]`` is True where that satellite is an outlier.
     """
     if variables is None:
-        variables = list(_INTERSC_PARAMS.keys())
+        variables = list(_OUTLIER_PARAMS.keys())
 
     idx = df_ace.index
     sat_series_all = {1: df_ace, 2: df_dsc, 3: df_wind}
@@ -177,26 +203,29 @@ def check_outlier_satellite(df_ace, df_dsc, df_wind, variables=None):
     result = {c: {} for c in codes}
 
     for var in variables:
-        p = _INTERSC_PARAMS[var]
+        p = _OUTLIER_PARAMS[var]
         w = p['window']
 
         s = {}
         for c, df in sat_series_all.items():
-            s[c] = df[var].reindex(idx) if var in df.columns else pd.Series(np.nan, index=idx)
+            s[c] = df[var].reindex(
+                idx) if var in df.columns else pd.Series(np.nan, index=idx)
 
         # Pairwise agreement masks for every combination.
         pair_ok = {}
         for a, b in [(1, 2), (1, 3), (2, 3)]:
             if p['mode'] == 'abs':
                 dev = (s[a] - s[b]).abs()
-                roll = dev.rolling(window=w, center=True, min_periods=5).median()
+                roll = dev.rolling(window=w, center=True,
+                                   min_periods=5).median()
                 pair_ok[(a, b)] = (roll <= p['threshold']).fillna(True)
             else:
                 with np.errstate(divide='ignore', invalid='ignore'):
                     ratio = s[a] / s[b]
                 log_r = np.log(ratio.clip(lower=1e-10)).abs()
                 log_thresh = np.log(p['threshold'])
-                roll = log_r.rolling(window=w, center=True, min_periods=5).median()
+                roll = log_r.rolling(window=w, center=True,
+                                     min_periods=5).median()
                 pair_ok[(a, b)] = (roll <= log_thresh).fillna(True)
 
         for c in codes:
@@ -205,7 +234,8 @@ def check_outlier_satellite(df_ace, df_dsc, df_wind, variables=None):
             others_agree = pair_ok[(min(a, b), max(a, b))]
             disagrees_a = ~pair_ok[(min(c, a), max(c, a))]
             disagrees_b = ~pair_ok[(min(c, b), max(c, b))]
-            result[c][var] = (others_agree & disagrees_a & disagrees_b).fillna(False)
+            result[c][var] = (others_agree & disagrees_a &
+                              disagrees_b).fillna(False)
 
     return result
 
@@ -298,6 +328,7 @@ def check_near_zero(df_dsc, variables=None, atol=0.5):
 
 PLASMA_VARS = ['Ux', 'Uy', 'Uz', 'rho', 'T']
 
+
 def score_all_plasma(df_ace, df_dsc, df_wind):
     """Evaluate plasma quality for every satellite, variable, and minute.
 
@@ -319,18 +350,23 @@ def score_all_plasma(df_ace, df_dsc, df_wind):
         should not be used.  Codes: 1 = ACE, 2 = DSCOVR, 3 = WIND.
     """
     idx = df_ace.index
-    df_ace = df_ace.reindex(idx) if not df_ace.empty else pd.DataFrame(index=idx)
-    df_dsc = df_dsc.reindex(idx) if not df_dsc.empty else pd.DataFrame(index=idx)
-    df_wind = df_wind.reindex(idx) if not df_wind.empty else pd.DataFrame(index=idx)
+    df_ace = df_ace.reindex(
+        idx) if not df_ace.empty else pd.DataFrame(index=idx)
+    df_dsc = df_dsc.reindex(
+        idx) if not df_dsc.empty else pd.DataFrame(index=idx)
+    df_wind = df_wind.reindex(
+        idx) if not df_wind.empty else pd.DataFrame(index=idx)
 
     sat_dfs = {1: df_ace, 2: df_dsc, 3: df_wind}
     sat_names = {1: 'ACE', 2: 'DSCOVR', 3: 'WIND'}
 
     # --- Outlier detection (works when 3 satellites are present) ---
-    outlier_masks = check_outlier_satellite(df_ace, df_dsc, df_wind, PLASMA_VARS)
+    outlier_masks = check_outlier_satellite(
+        df_ace, df_dsc, df_wind, PLASMA_VARS)
 
     # --- DSCOVR pairwise check (works with 2+ satellites) ---
-    dsc_intersc = check_intersc_consistency(df_dsc, df_ace, df_wind, PLASMA_VARS)
+    dsc_intersc = check_intersc_consistency(
+        df_dsc, df_ace, df_wind, PLASMA_VARS)
 
     all_bad = {}
     for code, df_target in sat_dfs.items():
@@ -338,7 +374,8 @@ def score_all_plasma(df_ace, df_dsc, df_wind):
         nan_m = check_nan_fraction(df_target, PLASMA_VARS)
 
         # DSCOVR-specific instrument checks.
-        plateau_m = check_flat_plateau(df_target, PLASMA_VARS) if code == 2 else {}
+        plateau_m = check_flat_plateau(
+            df_target, PLASMA_VARS) if code == 2 else {}
         zero_m = check_near_zero(df_target, ['Uy', 'Uz']) if code == 2 else {}
 
         bad = {}

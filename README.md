@@ -40,8 +40,10 @@ Comparisons are absolute for velocity and log-ratio for density/temperature so t
 |---|---|---|---|
 | Ux | absolute | 50 km/s | 31 min |
 | Uy, Uz | absolute | 30 km/s | 31 min |
-| rho | log-ratio | 3× | 61 min |
-| T | log-ratio | 3× | 31 min |
+| rho | log-ratio | **2×** | 61 min |
+| T | log-ratio | **2×** | 31 min |
+
+The rho/T threshold here (2×) is intentionally tighter than the outlier check above (3×). DSCOVR can be persistently elevated by a moderate 1.5–2× for hours at a time — enough to corrupt the merged output but not enough to trigger a 3× threshold. The outlier check is kept at 3× because applying 2× symmetrically causes ACE to be incorrectly flagged on days where DSCOVR and WIND are both elevated and happen to "agree" with each other.
 
 ### 3. Physical range checks (all satellites)
 
@@ -129,7 +131,8 @@ All quality thresholds are module-level constants in `l1_quality.py` and can be 
 
 ```python
 _PLATEAU_PARAMS   # flat-plateau: window, std_thresh, max_unique per variable
-_INTERSC_PARAMS   # inter-spacecraft: mode, threshold, window per variable
+_INTERSC_PARAMS   # DSCOVR pairwise check: mode, threshold (2× for rho/T), window
+_OUTLIER_PARAMS   # symmetric outlier check: mode, threshold (3× for rho/T), window
 _PHYSICAL_BOUNDS  # range checks: min/max per variable
 
 # check_nan_fraction():  window (default 60 min), threshold (default 0.5)
