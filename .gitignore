@@ -1,14 +1,8 @@
 # Downloaded CDF/NetCDF source data
 cdf_temp/
 
-# Pipeline output data
-L1/
-
 # Plot outputs
 plots/
-
-# Scratch / debug work
-scratch/
 
 # Python
 __pycache__/

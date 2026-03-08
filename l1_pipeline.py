@@ -84,10 +84,14 @@ def process_satellite(
         print(f'Missing both MAG and Plasma files for {sat_name}. Skipping.')
         return
 
-    # Build empty placeholders when one stream is missing.
+    # Read ALL matching CDFs and concatenate.  glob.glob() returns files
+    # in arbitrary filesystem order, so reading only [0] can silently pick
+    # the wrong day's CDF when multiple files exist for the time range.
     if mag_files:
-        df_mag = cdf_to_df(
-            mag_files[0], var_map['mag_time'], var_map['mag_vars'])
+        mag_frames = [cdf_to_df(f, var_map['mag_time'], var_map['mag_vars'])
+                      for f in sorted(mag_files)]
+        df_mag = pd.concat([f for f in mag_frames if not f.empty]).sort_index()
+        df_mag = df_mag[~df_mag.index.duplicated(keep='first')]
     else:
         print(f'Missing MAG files for {sat_name}. Filling with NaNs.')
         mag_cols = []
@@ -96,8 +100,10 @@ def process_satellite(
         df_mag = pd.DataFrame(columns=mag_cols)
 
     if plasma_files:
-        df_plasma = cdf_to_df(
-            plasma_files[0], var_map['plasma_time'], var_map['plasma_vars'])
+        plasma_frames = [cdf_to_df(f, var_map['plasma_time'], var_map['plasma_vars'])
+                         for f in sorted(plasma_files)]
+        df_plasma = pd.concat([f for f in plasma_frames if not f.empty]).sort_index()
+        df_plasma = df_plasma[~df_plasma.index.duplicated(keep='first')]
     else:
         print(f'Missing Plasma files for {sat_name}. Filling with NaNs.')
         plasma_cols = []

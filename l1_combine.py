@@ -276,6 +276,10 @@ def create_combined_l1_files(day, prev_day=None, next_day=None,
     df_today = df_combined.loc[today_mask].copy()
     prov_today = provenance.loc[today_mask].copy()
 
+    # Final pass: linearly interpolate any NaN gaps that exceed the
+    # per-variable rolling fill performed inside combine_data_priority.
+    df_today = df_today.interpolate(method='linear')
+
     # Write unpropagated combined file.
     outfile_comb = os.path.join(output_dir, 'L1_combined.dat')
     with open(outfile_comb, 'w', encoding='utf-8') as f:
