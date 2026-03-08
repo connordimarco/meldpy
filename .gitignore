@@ -4,6 +4,12 @@ cdf_temp/
 # Plot outputs
 plots/
 
+# Data 
+L1/
+
+# Debug Work 
+scratch/
+
 # Python
 __pycache__/
 *.pyc
