@@ -102,7 +102,8 @@ def process_satellite(
     if plasma_files:
         plasma_frames = [cdf_to_df(f, var_map['plasma_time'], var_map['plasma_vars'])
                          for f in sorted(plasma_files)]
-        df_plasma = pd.concat([f for f in plasma_frames if not f.empty]).sort_index()
+        df_plasma = pd.concat(
+            [f for f in plasma_frames if not f.empty]).sort_index()
         df_plasma = df_plasma[~df_plasma.index.duplicated(keep='first')]
     else:
         print(f'Missing Plasma files for {sat_name}. Filling with NaNs.')

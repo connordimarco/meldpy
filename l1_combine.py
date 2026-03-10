@@ -287,8 +287,10 @@ def create_combined_l1_files(day, prev_day=None, next_day=None,
         for t, row in df_today.iterrows():
             if pd.isna(row['Bx']):
                 continue
-            n_sat_val = int(prov_today.at[t, 'nSat']) if pd.notna(prov_today.at[t, 'nSat']) else 0
-            sat_used_val = int(prov_today.at[t, 'satUsed']) if pd.notna(prov_today.at[t, 'satUsed']) else 0
+            n_sat_val = int(prov_today.at[t, 'nSat']) if pd.notna(
+                prov_today.at[t, 'nSat']) else 0
+            sat_used_val = int(prov_today.at[t, 'satUsed']) if pd.notna(
+                prov_today.at[t, 'satUsed']) else 0
             f.write(
                 f"{t.year:4d} {t.month:2d} {t.day:2d} {t.hour:2d} {t.minute:2d} {t.second:2d} {t.microsecond//1000:3d} "
                 f"{row['Bx']:8.2f} {row['By']:8.2f} {row['Bz']:8.2f} "

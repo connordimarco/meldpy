@@ -10,6 +10,7 @@ All three satellites (ACE, DSCOVR, WIND) are overlaid in the first column.
 Output is saved to plots/YYYY_MM_DD.png.
 """
 
+from l1_readers import read_l1_data
 from datetime import datetime
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
@@ -18,7 +19,6 @@ import pandas as pd
 import matplotlib
 matplotlib.use('Agg')
 
-from l1_readers import read_l1_data
 
 # ---------------------------------------------------------------------------
 # Helpers
