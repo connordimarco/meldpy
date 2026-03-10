@@ -18,6 +18,8 @@ import pandas as pd
 import matplotlib
 matplotlib.use('Agg')
 
+from l1_readers import read_l1_data
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -41,26 +43,6 @@ VAR_LABELS = {
 
 VARIABLES = list(VAR_LABELS.keys())
 COL_HEADERS = ['Individual Satellites', 'Combined', '14 R\u2091', '32 R\u2091']
-
-
-def read_dat(filepath):
-    """Read one of the .dat files produced by l1_routines."""
-    col_names = ['year', 'mo', 'dy', 'hr', 'mn', 'sc', 'msc',
-                 'Bx', 'By', 'Bz', 'Ux', 'Uy', 'Uz', 'rho', 'T']
-    if not os.path.exists(filepath):
-        return pd.DataFrame()
-    try:
-        df = pd.read_csv(filepath, sep=r'\s+', names=col_names,
-                         comment='#', skiprows=3, usecols=range(len(col_names)))
-    except Exception:
-        return pd.DataFrame()
-    if df.empty:
-        return df
-    dt_cols = df[['year', 'mo', 'dy', 'hr', 'mn', 'sc']].copy()
-    dt_cols.columns = ['year', 'month', 'day', 'hour', 'minute', 'second']
-    df['timestamp'] = pd.to_datetime(
-        dt_cols) + pd.to_timedelta(df['msc'], unit='ms')
-    return df.set_index('timestamp')
 
 
 def fmt_xaxis(ax, day_str):
@@ -89,13 +71,13 @@ def plot_day(day_str, output_dir='plots'):
     sats = {}
     for sat in ('ace', 'dscovr', 'wind'):
         fpath = os.path.join(data_dir, f'L1_{sat}.dat')
-        df = read_dat(fpath)
+        df = read_l1_data(fpath)
         if not df.empty:
             sats[sat] = df
 
-    df_combined = read_dat(os.path.join(data_dir, 'L1_combined.dat'))
-    df_14re = read_dat(os.path.join(data_dir, 'IMF_14Re.dat'))
-    df_32re = read_dat(os.path.join(data_dir, 'IMF_32Re.dat'))
+    df_combined = read_l1_data(os.path.join(data_dir, 'L1_combined.dat'))
+    df_14re = read_l1_data(os.path.join(data_dir, 'IMF_14Re.dat'))
+    df_32re = read_l1_data(os.path.join(data_dir, 'IMF_32Re.dat'))
 
     n_rows = len(VARIABLES)
     n_cols = 4
@@ -191,12 +173,12 @@ def _read_day_files(day_str):
     data_dir = dt.strftime('L1/%Y/%m/%d')
     sats = {}
     for sat in ('ace', 'dscovr', 'wind'):
-        df = read_dat(os.path.join(data_dir, f'L1_{sat}.dat'))
+        df = read_l1_data(os.path.join(data_dir, f'L1_{sat}.dat'))
         if not df.empty:
             sats[sat] = df
-    df_combined = read_dat(os.path.join(data_dir, 'L1_combined.dat'))
-    df_14re = read_dat(os.path.join(data_dir, 'IMF_14Re.dat'))
-    df_32re = read_dat(os.path.join(data_dir, 'IMF_32Re.dat'))
+    df_combined = read_l1_data(os.path.join(data_dir, 'L1_combined.dat'))
+    df_14re = read_l1_data(os.path.join(data_dir, 'IMF_14Re.dat'))
+    df_32re = read_l1_data(os.path.join(data_dir, 'IMF_32Re.dat'))
     return sats, df_combined, df_14re, df_32re
 
 
@@ -347,7 +329,4 @@ if __name__ == '__main__':
     days = pd.date_range(start='2024-05-01',
                          end='2024-05-31').strftime('%Y-%m-%d').tolist()
     for day in days:
-        try:
-            plot_day(day)
-        except Exception as exc:
-            print(f"  ERROR for {day}: {exc}")
+        plot_day(day)

@@ -145,8 +145,7 @@ def process_satellite(
         df_final['T'] = np.nan
 
     # Keep obviously bad temperature fill values out of output.
-    if 'T' in df_final.columns:
-        df_final.loc[df_final['T'] > 1e9, 'T'] = np.nan
+    df_final.loc[df_final['T'] > 1e9, 'T'] = np.nan
 
     dt_start = datetime.strptime(trange_start, '%Y-%m-%d')
     output_dir = dt_start.strftime('L1/%Y/%m/%d')
@@ -234,9 +233,7 @@ def process_satellite_ngdc(day, data_dir, trange_start, trange_end, cleanup=True
     # NGDC temperature is already Kelvin; just guard bad outliers.
     if 'T' not in df_final.columns:
         df_final['T'] = np.nan
-
-    if 'T' in df_final.columns:
-        df_final.loc[df_final['T'] > 1e9, 'T'] = np.nan
+    df_final.loc[df_final['T'] > 1e9, 'T'] = np.nan
 
     dt_start = datetime.strptime(trange_start, '%Y-%m-%d')
     output_dir = dt_start.strftime('L1/%Y/%m/%d')
@@ -249,7 +246,7 @@ def process_satellite_ngdc(day, data_dir, trange_start, trange_end, cleanup=True
         f.write('year  mo  dy  hr  mn  sc msc Bx By Bz Ux Uy Uz rho T\n')
         f.write('#START\n')
         for t, row in df_final.iterrows():
-            if pd.isna(row.get('Bx', np.nan)):
+            if pd.isna(row['Bx']):
                 continue
             f.write(
                 f"{t.year:4d} {t.month:2d} {t.day:2d} {t.hour:2d} {t.minute:2d} "

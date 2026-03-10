@@ -29,21 +29,19 @@ def gse_to_gsm(df, cols):
     if df.empty:
         return df
 
-    try:
-        # SpacePy wants vectors as Nx3 and matching timestamps.
-        vec_gse = df[cols].values
-        times = df.index.to_pydatetime()
-        t = Ticktock(times, 'UTC')
-        # Convert coordinate frame in one shot.
-        c_gse = sc.Coords(vec_gse, 'GSE', 'car', ticks=t)
-        c_gsm = c_gse.convert('GSM', 'car')
-        vec_gsm = c_gsm.data
+    # SpacePy wants vectors as Nx3 and matching timestamps.
+    vec_gse = df[cols].values
+    times = df.index.to_pydatetime()
+    t = Ticktock(times, 'UTC')
 
-        # Write converted vectors back into the same columns.
-        df[cols[0]] = vec_gsm[:, 0]
-        df[cols[1]] = vec_gsm[:, 1]
-        df[cols[2]] = vec_gsm[:, 2]
-    except Exception as e:
-        print(f"Error in Coordinate Transformation: {e}")
+    # Convert coordinate frame in one shot.
+    c_gse = sc.Coords(vec_gse, 'GSE', 'car', ticks=t)
+    c_gsm = c_gse.convert('GSM', 'car')
+    vec_gsm = c_gsm.data
+
+    # Write converted vectors back into the same columns.
+    df[cols[0]] = vec_gsm[:, 0]
+    df[cols[1]] = vec_gsm[:, 1]
+    df[cols[2]] = vec_gsm[:, 2]
 
     return df

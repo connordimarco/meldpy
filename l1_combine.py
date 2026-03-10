@@ -101,7 +101,6 @@ def _select_column_with_continuity(col, sat_series, bad_masks=None):
     out_src = np.zeros(len(index), dtype=int)
     out_nsat = np.zeros(len(index), dtype=int)
 
-    prev_source = 0
     prev_value = np.nan
 
     for i, _ in enumerate(index):
@@ -144,15 +143,13 @@ def _select_column_with_continuity(col, sat_series, bad_masks=None):
 
         # Continuity guard: if the candidate would jump too far from the
         # previous output value, pick whichever available satellite is
-        # closest.  This handles median→2-sat transitions where
-        # prev_source (0=median) is no longer in the available list.
+        # closest.
         if np.isfinite(prev_value) and abs(values[candidate] - prev_value) > _switch_threshold(col):
             closest = min(available, key=lambda c: abs(values[c] - prev_value))
             candidate = closest
 
         out_vals[i] = values[candidate]
         out_src[i] = candidate
-        prev_source = candidate
         prev_value = out_vals[i]
 
     return pd.Series(out_vals, index=index), pd.Series(out_src, index=index), pd.Series(out_nsat, index=index)
@@ -290,12 +287,8 @@ def create_combined_l1_files(day, prev_day=None, next_day=None,
         for t, row in df_today.iterrows():
             if pd.isna(row['Bx']):
                 continue
-            n_sat = prov_today.at[t,
-                                  'nSat'] if t in prov_today.index else pd.NA
-            sat_used = prov_today.at[t,
-                                     'satUsed'] if t in prov_today.index else pd.NA
-            n_sat_val = int(n_sat) if pd.notna(n_sat) else 0
-            sat_used_val = int(sat_used) if pd.notna(sat_used) else 0
+            n_sat_val = int(prov_today.at[t, 'nSat']) if pd.notna(prov_today.at[t, 'nSat']) else 0
+            sat_used_val = int(prov_today.at[t, 'satUsed']) if pd.notna(prov_today.at[t, 'satUsed']) else 0
             f.write(
                 f"{t.year:4d} {t.month:2d} {t.day:2d} {t.hour:2d} {t.minute:2d} {t.second:2d} {t.microsecond//1000:3d} "
                 f"{row['Bx']:8.2f} {row['By']:8.2f} {row['Bz']:8.2f} "
@@ -344,41 +337,26 @@ def create_combined_l1_files(day, prev_day=None, next_day=None,
         target_km = b_re * 6371.0
         print(f'  -> Propagating to {b_re} Re ({target_km:.0f} km)...')
 
-        try:
-            df_propagated = ballistic_propagation(
-                mock_orbit, df_prop_input, target_x_km=target_km)
-            df_propagated = df_propagated.rename(
-                columns={'Vx Velocity, km/s, GSE': 'Ux'})
+        df_propagated = ballistic_propagation(
+            mock_orbit, df_prop_input, target_x_km=target_km)
+        df_propagated = df_propagated.rename(
+            columns={'Vx Velocity, km/s, GSE': 'Ux'})
 
-            filename = f'IMF_{b_re}Re.dat'
-            outfile_prop = os.path.join(output_dir, filename)
+        filename = f'IMF_{b_re}Re.dat'
+        outfile_prop = os.path.join(output_dir, filename)
 
-            with open(outfile_prop, 'w', encoding='utf-8') as f:
+        with open(outfile_prop, 'w', encoding='utf-8') as f:
+            f.write(
+                f'Propagated L1 Data for {day} (Target: {b_re} Re) (GSM nT, km/s, cm^-3, K)\n')
+            f.write('year mo dy hr mn sc msc Bx By Bz Ux Uy Uz rho T\n')
+            f.write('#START\n')
+            for t, row in df_propagated.iterrows():
+                if pd.isna(row['Bx']):
+                    continue
                 f.write(
-                    f'Propagated L1 Data for {day} (Target: {b_re} Re) (GSM nT, km/s, cm^-3, K)\n')
-                f.write('year mo dy hr mn sc msc Bx By Bz Ux Uy Uz rho T\n')
-                f.write('#START\n')
-                for t, row in df_propagated.iterrows():
-                    if pd.isna(row['Bx']):
-                        continue
-                    if not isinstance(t, pd.Timestamp):
-                        t = pd.Timestamp(t)
-                    if pd.isna(t):
-                        continue
-
-                    bx, by, bz = row.get('Bx', np.nan), row.get(
-                        'By', np.nan), row.get('Bz', np.nan)
-                    ux, uy, uz = row.get('Ux', np.nan), row.get(
-                        'Uy', np.nan), row.get('Uz', np.nan)
-                    rho, t_val = row.get('rho', np.nan), row.get('T', np.nan)
-
-                    f.write(
-                        f"{t.year:4d} {t.month:2d} {t.day:2d} {t.hour:2d} {t.minute:2d} {t.second:2d} {t.microsecond//1000:3d} "
-                        f"{bx:8.2f} {by:8.2f} {bz:8.2f} "
-                        f"{ux:9.2f} {uy:9.2f} {uz:9.2f} "
-                        f"{rho:9.4f} {t_val:10.1f}\n"
-                    )
-            print(f'    Created {outfile_prop}')
-
-        except Exception as e:
-            print(f'    Error propagating to {b_re} Re: {e}')
+                    f"{t.year:4d} {t.month:2d} {t.day:2d} {t.hour:2d} {t.minute:2d} {t.second:2d} {t.microsecond//1000:3d} "
+                    f"{row['Bx']:8.2f} {row['By']:8.2f} {row['Bz']:8.2f} "
+                    f"{row['Ux']:9.2f} {row['Uy']:9.2f} {row['Uz']:9.2f} "
+                    f"{row['rho']:9.4f} {row['T']:10.1f}\n"
+                )
+        print(f'    Created {outfile_prop}')

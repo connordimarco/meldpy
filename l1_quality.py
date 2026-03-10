@@ -4,7 +4,7 @@ l1_quality.py
 Plasma quality assessment for all three L1 satellites (ACE, DSCOVR, WIND).
 
 Produces per-satellite, per-variable, per-timestep boolean bad-masks.
-Five independent checks are applied:
+Six independent checks are applied:
 
   1. Flat-plateau detection   — stuck/near-constant instrument readings (DSCOVR)
   2. Outlier detection        — flags odd-one-out when 2-of-3 satellites agree

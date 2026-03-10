@@ -87,9 +87,6 @@ def cdf_to_df(cdf_path, time_var, data_vars):
         return pd.DataFrame(data).set_index('timestamp')
     except Exception as e:
         print(f"Error reading CDF {cdf_path}: {e}")
-        import traceback
-
-        traceback.print_exc()
         return pd.DataFrame()
 
 
@@ -169,9 +166,6 @@ def nc_gz_to_df(nc_gz_path, time_var, data_vars):
 
     except Exception as e:
         print(f"Error reading {nc_gz_path}: {e}")
-        import traceback
-
-        traceback.print_exc()
         return pd.DataFrame()
 
 
