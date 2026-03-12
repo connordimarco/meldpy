@@ -373,9 +373,11 @@ def score_all_plasma(df_ace, df_dsc, df_wind):
         range_m = check_physical_range(df_target, PLASMA_VARS)
         nan_m = check_nan_fraction(df_target, PLASMA_VARS)
 
-        # DSCOVR-specific instrument checks.
-        plateau_m = check_flat_plateau(
-            df_target, PLASMA_VARS) if code == 2 else {}
+        # Flat-plateau applies to all satellites (any instrument can get stuck).
+        # Near-zero Uy/Uz is DSCOVR-specific: it catches a Faraday cup artefact
+        # where DSCOVR zeroes transverse velocity; ACE/WIND can legitimately have
+        # near-zero Uy/Uz during quiet solar wind conditions.
+        plateau_m = check_flat_plateau(df_target, PLASMA_VARS)
         zero_m = check_near_zero(df_target, ['Uy', 'Uz']) if code == 2 else {}
 
         bad = {}

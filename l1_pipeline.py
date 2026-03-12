@@ -28,6 +28,7 @@ from l1_downloaders import (
     download_dscovr_ngdc,
     download_position_cdaweb_files,
 )
+from l1_filters import despike
 from l1_readers import cdf_to_df, nc_gz_to_df
 
 
@@ -148,6 +149,18 @@ def process_satellite(
     # Keep obviously bad temperature fill values out of output.
     df_final.loc[df_final['T'] > 1e9, 'T'] = np.nan
 
+    # T and rho come from the same plasma file: if rho is NaN the thermal
+    # speed is either absent or a fill value, so T must also be NaN.
+    if 'rho' in df_final.columns:
+        df_final.loc[df_final['rho'].isna(), 'T'] = np.nan
+
+    # Despike and fill short gaps before writing the per-satellite file.
+    # No limit here — any remaining gaps the CDF source couldn't fill are
+    # interpolated over entirely; the combine step's quality checks flag
+    # contaminated intervals independently.
+    df_final = despike(df_final)
+    df_final = df_final.interpolate(method='time', limit_area='inside')
+
     dt_start = datetime.strptime(trange_start, '%Y-%m-%d')
     output_dir = dt_start.strftime('L1/%Y/%m/%d')
     os.makedirs(output_dir, exist_ok=True)
@@ -160,9 +173,6 @@ def process_satellite(
         f.write('#START\n')
 
         for t, row in df_final.iterrows():
-            if pd.isna(row['Bx']):
-                continue
-
             f.write(
                 f"{t.year:4d} {t.month:2d} {t.day:2d} {t.hour:2d} {t.minute:2d} {t.second:2d} {t.microsecond//1000:3d} "
                 f"{row['Bx']:8.2f} {row['By']:8.2f} {row['Bz']:8.2f} "
@@ -236,6 +246,13 @@ def process_satellite_ngdc(day, data_dir, trange_start, trange_end, cleanup=True
         df_final['T'] = np.nan
     df_final.loc[df_final['T'] > 1e9, 'T'] = np.nan
 
+    # Despike and fill short gaps before writing the per-satellite file.
+    # No limit here — any remaining gaps the CDF source couldn't fill are
+    # interpolated over entirely; the combine step's quality checks flag
+    # contaminated intervals independently.
+    df_final = despike(df_final)
+    df_final = df_final.interpolate(method='time', limit_area='inside')
+
     dt_start = datetime.strptime(trange_start, '%Y-%m-%d')
     output_dir = dt_start.strftime('L1/%Y/%m/%d')
     os.makedirs(output_dir, exist_ok=True)
@@ -247,8 +264,6 @@ def process_satellite_ngdc(day, data_dir, trange_start, trange_end, cleanup=True
         f.write('year  mo  dy  hr  mn  sc msc Bx By Bz Ux Uy Uz rho T\n')
         f.write('#START\n')
         for t, row in df_final.iterrows():
-            if pd.isna(row['Bx']):
-                continue
             f.write(
                 f"{t.year:4d} {t.month:2d} {t.day:2d} {t.hour:2d} {t.minute:2d} "
                 f"{t.second:2d} {t.microsecond//1000:3d} "

@@ -13,11 +13,13 @@ expected to be cleaned up by the calling pipeline after processing.
 import os
 import re
 from datetime import datetime
+import time
 
 import requests
 
 
-def download_cdaweb_files(cda, datasets, trange_start, trange_end, data_dir, label='CDAWeb'):
+def download_cdaweb_files(cda, datasets, trange_start, trange_end, data_dir,
+                          label='CDAWeb', max_attempts=3, retry_delay=30):
     """Download a set of CDAWeb datasets for a given time range.
 
     Parameters
@@ -32,6 +34,10 @@ def download_cdaweb_files(cda, datasets, trange_start, trange_end, data_dir, lab
         Local directory to write downloaded files into.
     label : str
         Human-readable label for log messages.
+    max_attempts : int
+        Maximum number of query/download attempts before giving up.
+    retry_delay : int | float
+        Seconds to wait between failed attempts.
 
     Returns
     -------
@@ -41,22 +47,36 @@ def download_cdaweb_files(cda, datasets, trange_start, trange_end, data_dir, lab
     # Make sure the target folder exists before downloading.
     os.makedirs(data_dir, exist_ok=True)
 
-    # Ask CDAWeb for files in the requested time window.
-    print(f'Querying {label}...')
-    urllist = cda.get_filenames(datasets, trange_start, trange_end)
+    last_error = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            # Ask CDAWeb for files in the requested time window.
+            print(f'Querying {label} (attempt {attempt}/{max_attempts})...')
+            urllist = cda.get_filenames(datasets, trange_start, trange_end)
 
-    if not urllist:
-        # Nothing found is okay; caller can decide what to do.
-        print('No files found.')
-        return []
+            if not urllist:
+                # Nothing found is okay; caller can decide what to do.
+                print('No files found.')
+                return []
 
-    # Pull files to local scratch storage.
-    print(f'Downloading {len(urllist)} files...')
-    cda.cda_download(urllist, local_dir=data_dir, download_only=True)
-    return urllist
+            # Pull files to local scratch storage.
+            print(f'Downloading {len(urllist)} files...')
+            cda.cda_download(urllist, local_dir=data_dir, download_only=True)
+            return urllist
+        except Exception as exc:
+            last_error = exc
+            print(f'WARNING: {label} download attempt {attempt} failed: {exc}')
+            if attempt < max_attempts:
+                print(f'Waiting {retry_delay} seconds before retrying...')
+                time.sleep(retry_delay)
+
+    raise RuntimeError(
+        f'Failed to download {label} after {max_attempts} attempts: {last_error}'
+    ) from last_error
 
 
-def download_position_cdaweb_files(cda, day, data_dir):
+def download_position_cdaweb_files(cda, day, data_dir,
+                                   max_attempts=3, retry_delay=30):
     """Download a narrow (~2 h) noon window of position data for one day.
 
     Fetches ACE MFI, WIND MFI, and DSCOVR orbit CDF files.
@@ -68,6 +88,8 @@ def download_position_cdaweb_files(cda, day, data_dir):
     cda : pyspedas.CDAWeb
     day : str  ('YYYY-MM-DD')
     data_dir : str
+    max_attempts : int
+    retry_delay : int | float
 
     Returns
     -------
@@ -88,6 +110,8 @@ def download_position_cdaweb_files(cda, day, data_dir):
         trange_end,
         data_dir,
         label='Position Data (11:00-13:00 UT)',
+        max_attempts=max_attempts,
+        retry_delay=retry_delay,
     )
 
 

@@ -83,7 +83,8 @@ def _preferred_source(col, available_codes):
     return None
 
 
-def _select_column_with_continuity(col, sat_series, bad_masks=None):
+def _select_column_with_continuity(col, sat_series, bad_masks=None,
+                                    use_hierarchy=False):
     """Merge one variable across satellites with continuity and quality logic.
 
     Parameters
@@ -95,6 +96,10 @@ def _select_column_with_continuity(col, sat_series, bad_masks=None):
     bad_masks : dict[int, dict[str, pd.Series]] or None
         Per-satellite, per-variable boolean masks from the quality scorer.
         ``bad_masks[sat_code][var]`` is True where that satellite is bad.
+    use_hierarchy : bool
+        When True (default) apply the priority rules (WIND > ACE > DSCOVR).
+        When False, average all available quality-passed satellites so that
+        no single spacecraft is preferred over another.
     """
     index = sat_series['ace'].index
     out_vals = np.full(len(index), np.nan, dtype=float)
@@ -131,6 +136,12 @@ def _select_column_with_continuity(col, sat_series, bad_masks=None):
             prev_value = out_vals[i]
             continue
 
+        if n_sat == 2 and not use_hierarchy:
+            out_vals[i] = np.mean(list(values.values()))
+            out_src[i] = 0
+            prev_value = out_vals[i]
+            continue
+
         if n_sat == 2 and col in ['Bx', 'By', 'Bz'] and 1 in available and 2 in available:
             out_vals[i] = np.mean([values[1], values[2]])
             out_src[i] = 0
@@ -155,7 +166,7 @@ def _select_column_with_continuity(col, sat_series, bad_masks=None):
     return pd.Series(out_vals, index=index), pd.Series(out_src, index=index), pd.Series(out_nsat, index=index)
 
 
-def combine_data_priority(data_map, master_grid):
+def combine_data_priority(data_map, master_grid, use_hierarchy=False):
     # Align each satellite to the same timeline before merging.
     df_ace = _fill_short_gaps(data_map.get('ace', pd.DataFrame(
         index=master_grid)).reindex(master_grid))
@@ -189,6 +200,7 @@ def combine_data_priority(data_map, master_grid):
             col,
             sat_series,
             bad_masks=col_masks,
+            use_hierarchy=use_hierarchy,
         )
         df_combined[col] = values
         src_map[col] = src_codes
@@ -196,7 +208,7 @@ def combine_data_priority(data_map, master_grid):
 
     # Interpolate short NaN gaps left by quality-gating.
     df_combined = df_combined.interpolate(
-        method='time', limit=20, limit_area='inside')
+        method='time', limit=30, limit_area='inside')
 
     provenance = pd.DataFrame(index=master_grid)
     provenance['nSat'] = nsat_map['Ux'].astype('Int64')
@@ -206,7 +218,7 @@ def combine_data_priority(data_map, master_grid):
 
 
 def create_combined_l1_files(day, prev_day=None, next_day=None,
-                             boundaries_re=(14, 32)):
+                             boundaries_re=(14, 32), use_hierarchy=False):
     """Build combined L1 products for *day* using rolling neighbour context.
 
     When *prev_day* and/or *next_day* are supplied the quality-scoring,
@@ -259,7 +271,8 @@ def create_combined_l1_files(day, prev_day=None, next_day=None,
                                 freq='1min')
 
     # Quality-score + satellite-select over the full window.
-    df_combined, provenance = combine_data_priority(data_map, master_grid)
+    df_combined, provenance = combine_data_priority(data_map, master_grid,
+                                                    use_hierarchy=use_hierarchy)
 
     # Despike over the full window so filters are warmed-up at day edges.
     if 'rho' in df_combined.columns or 'Ux' in df_combined.columns:
