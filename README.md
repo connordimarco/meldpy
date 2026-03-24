@@ -7,6 +7,7 @@ Downloads, quality-screens, and combines 1-minute solar wind from **ACE**, **DSC
 ## Data Flow
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'fontSize': '18px', 'fontFamily': 'arial'}}}%%
 flowchart TD
     subgraph PIPE["l1_pipeline.py  —  Per-Satellite Processing"]
         ACE["ACE · CDAWeb\nAC_H0_MFI  AC_H0_SWE"]
@@ -27,29 +28,37 @@ flowchart TD
 
     subgraph COMB["l1_combine.py  —  create_combined_l1_files()"]
         LD["Load per-satellite .dat files\n±1-day context window\nalign all satellites to common 1-min master grid"]
+
         subgraph QC["score_all_plasma()  ·  l1_quality.py  —  plasma only: Ux  Uy  Uz  rho"]
-            Q1["① Outlier detection\nflag odd-one-out when the other two satellites agree\npairwise rolling median  ·  per-variable threshold"]
-            Q2["② Physical range check\nUx: −2500 to −150 km/s  ·  rho: 0.1 – 100 cm⁻³\nUy  Uz: ±200 km/s"]
+            Q1["① Outlier detection\nflag odd-one-out when the other two satellites agree\npairwise rolling median  ·  per-variable absolute or ratio threshold"]
+            Q2["② Physical range check\nreject implausible values\nUx: −2500 to −150 km/s  ·  rho: 0.1 – 100 cm⁻³\nUy  Uz: ±200 km/s"]
             Q3["③ NaN-fraction check\nflag windows where >50% of points are missing\n60-minute rolling window"]
             Q4["④ Flat-plateau detection\nflag stuck or near-constant instrument readings\nrolling std ≤ threshold  AND  unique-value count ≤ 3"]
-            Q5["⑤ Near-zero Uy/Uz  —  DSCOVR only\nFaraday-cup transverse-velocity artefact\n|Uy| or |Uz| ≤ 0.5 km/s while non-NaN"]
+            Q5["⑤ Near-zero Uy/Uz  —  DSCOVR only\nFaraday-cup transverse-velocity artifact\n|Uy| or |Uz| ≤ 0.5 km/s while non-NaN"]
         end
-        VS["Per-variable satellite selection  ·  Bx  By  Bz  ·  Ux  Uy  Uz  ·  rho\nPlasma: quality bad-masks applied  ·  Magnetic field: bypasses quality gate\n3 satellites agree within threshold  →  median of all three\n2 satellites agree within threshold  →  mean of closest agreeing pair\nNone agree  →  satellite closest to previous output  WIND preferred at startup"]
+
+        VS["Per-variable satellite selection  ·  Bx  By  Bz  ·  Ux  Uy  Uz  ·  rho\nPlasma: quality bad-masks applied before selection\nMagnetic field: bypasses quality gate\n3 satellites agree within threshold  →  median of all three\n2 satellites agree within threshold  →  mean of closest agreeing pair\nNone agree  →  satellite closest to previous output value\n  WIND preferred at startup when no prior value exists"]
         DS2["despike()  ·  l1_filters.py\n3-point centered median on combined B + plasma stream"]
-        subgraph TC["combine_temperature()  ·  l1_combine_T.py  —  T handled independently"]
-            T1["① 3-point median  per satellite\nremoves single-minute spikes"]
-            T2["② Log-std spikiness filter  per satellite\nrolling 11-min window  ·  log-std > 0.5 → NaN\nrejects DSCOVR oscillation episodes"]
-            T3["③ Geometric median across available satellites\nexp  median  log T\nno threshold  ·  no source-switching\n2 sats → geometric mean  ·  3 sats → log-space middle"]
-            T4["④ 3-point rolling median  final pass\nremoves residual minute-level noise"]
+
+        subgraph TC["combine_temperature()  ·  l1_combine_T.py  —  T handled independently of B and plasma"]
+            T1["① 3-point median  per satellite\nremoves single-minute spikes in each T stream"]
+            T2["② Log-std spikiness filter  per satellite\nrolling 11-minute window  ·  log-std > 0.5 → NaN\nrejects DSCOVR multi-minute oscillation episodes"]
+            T3["③ Geometric median across available satellites\nexp  median  log T\nno threshold  ·  no source-switching  ·  single code path\n2 sats → geometric mean  ·  3 sats → log-space middle value"]
+            T4["④ 3-point rolling median  final pass\nremoves residual minute-level noise from combined T"]
             T1 --> T2 --> T3 --> T4
         end
+
         SL["Slice combined window to target day\nfill residual NaN gaps  linear interpolation  ≤ 30 min"]
-        LD --> QC
+
+        LD  --> QC
         Q1 & Q2 & Q3 & Q4 & Q5 --> VS
-        VS --> DS2 --> TC --> SL
+        VS  --> DS2
+        DS2 --> SL
+        LD  --> T1
+        T4  --> SL
     end
 
-    L1C[/"L1/YYYY/MM/DD/  ·  L1_combined.dat\nnSat  —  satellites with quality-passing Ux each minute"/]
+    L1C[/"L1/YYYY/MM/DD/  ·  L1_combined.dat\nnSat  —  number of quality-passing satellites contributing Ux each minute"/]
 
     subgraph PROP["l1_propagation.py  —  Ballistic Propagation"]
         BP["ballistic_propagation()\ntravel time  =  ΔX_GSM  /  Ux\ncausality-enforced monotone time mapping\nfrom satellite GSM X position to target boundary"]
