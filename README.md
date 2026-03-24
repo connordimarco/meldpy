@@ -39,7 +39,7 @@ flowchart TD
         VS["Per-variable satellite selection  ·  Bx  By  Bz  ·  Ux  Uy  Uz  ·  rho\nPlasma: quality bad-masks applied before selection\nMagnetic field: bypasses quality gate\n3 satellites agree within threshold  →  median of all three\n2 satellites agree within threshold  →  mean of closest agreeing pair\nNone agree  →  satellite closest to previous output value\n  WIND preferred at startup when no prior value exists"]
         DS2["despike()  ·  l1_filters.py\n3-point centered median on combined B + plasma stream"]
 
-        subgraph TC["combine_temperature()  ·  l1_combine_T.py  —  T handled independently of B and plasma"]
+        subgraph TC["combine_temperature()  ·  l1_combine_T.py\nT handled independently of B and plasma"]
             T1["① 3-point median  per satellite\nremoves single-minute spikes in each T stream"]
             T2["② Log-std spikiness filter  per satellite\nrolling 11-minute window  ·  log-std > 0.5 → NaN\nrejects DSCOVR multi-minute oscillation episodes"]
             T3["③ Geometric median across available satellites\nexp  median  log T\nno threshold  ·  no source-switching  ·  single code path\n2 sats → geometric mean  ·  3 sats → log-space middle value"]
