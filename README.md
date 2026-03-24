@@ -72,9 +72,6 @@ flowchart TD
     BP  --> IMF14
     BP  --> IMF32
 ```
-
-> The standalone source is [`pipeline_flowchart.mmd`](pipeline_flowchart.mmd) — open in [Mermaid Live Editor](https://mermaid.live) to export as PDF or SVG.
-
 ---
 
 ## File Inventory
