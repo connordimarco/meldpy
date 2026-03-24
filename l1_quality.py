@@ -187,7 +187,7 @@ def check_nan_fraction(df_dsc, variables=None, window=60, threshold=0.5):
     Returns dict[str, pd.Series] mapping variable name -> bad mask (True=bad).
     """
     if variables is None:
-        variables = ['Ux', 'Uy', 'Uz', 'rho', 'T']
+        variables = ['Ux', 'Uy', 'Uz', 'rho']
 
     masks = {}
     for var in variables:

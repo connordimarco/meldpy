@@ -102,9 +102,11 @@ After quality gating, each variable is merged minute-by-minute with an agreement
 
 T is handled separately because it spans orders of magnitude, and real propagation delays between spacecraft are indistinguishable from sensor disagreement. Quality gating on T consistently over-flags during solar wind transitions.
 
-Two steps:
-1. **Per-minute median** of all available satellite T values — naturally robust to one outlier without an explicit quality gate.
-2. **3-point rolling median** on the combined result to remove minute-level spikes.
+Three steps:
+1. **Per-satellite 3-point median** to remove single-minute spikes.
+2. **Per-satellite spikiness filter**: rolling log-std over an 11-minute window; minutes exceeding the threshold are excluded (catches DSCOVR oscillation episodes).
+3. **Geometric median**: `exp(median(log(T)))` across available satellites. Works correctly at any spread — no threshold, no source-switching. With 2 satellites this is the geometric mean; with 3 it returns the log-space middle value.
+4. **3-point rolling median** on the combined result to remove residual minute-level noise.
 
 ---
 
