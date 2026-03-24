@@ -50,10 +50,10 @@ flowchart TD
         SL["Slice combined window to target day\nfill residual NaN gaps  linear interpolation  ≤ 30 min"]
 
         LD  --> QC
+        QC  --> T1
         Q1 & Q2 & Q3 & Q4 & Q5 --> VS
         VS  --> DS2
         DS2 --> SL
-        LD  --> T1
         T4  --> SL
     end
 
