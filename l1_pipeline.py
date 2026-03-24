@@ -28,7 +28,7 @@ from l1_downloaders import (
     download_dscovr_ngdc,
     download_position_cdaweb_files,
 )
-from l1_filters import despike
+from l1_filters import despike, interpolate_with_limits, INTERP_LIMITS
 from l1_readers import cdf_to_df, nc_gz_to_df
 
 
@@ -45,6 +45,22 @@ _NGDC_M1M_VARS = {
     'by_gsm': ['By'],
     'bz_gsm': ['Bz'],
 }
+
+
+def _write_l1_dat(df, output_file, source_label):
+    """Write one L1-format ASCII file from a 1-minute DataFrame."""
+    with open(output_file, 'w', encoding='utf-8') as f:
+        f.write(f'{source_label} (nT, km/s, cm^-3, K)\n')
+        f.write('year  mo  dy  hr  mn  sc msc Bx By Bz Ux Uy Uz rho T\n')
+        f.write('#START\n')
+
+        for t, row in df.iterrows():
+            f.write(
+                f"{t.year:4d} {t.month:2d} {t.day:2d} {t.hour:2d} {t.minute:2d} {t.second:2d} {t.microsecond//1000:3d} "
+                f"{row['Bx']:8.2f} {row['By']:8.2f} {row['Bz']:8.2f} "
+                f"{row['Ux']:9.2f} {row['Uy']:9.2f} {row['Uz']:9.2f} "
+                f"{row['rho']:9.4f} {row['T']:10.1f}\n"
+            )
 
 
 def process_satellite(
@@ -154,32 +170,31 @@ def process_satellite(
     if 'rho' in df_final.columns:
         df_final.loc[df_final['rho'].isna(), 'T'] = np.nan
 
-    # Despike and fill short gaps before writing the per-satellite file.
-    # No limit here — any remaining gaps the CDF source couldn't fill are
-    # interpolated over entirely; the combine step's quality checks flag
-    # contaminated intervals independently.
-    df_final = despike(df_final)
-    df_final = df_final.interpolate(method='time', limit_area='inside')
-
     dt_start = datetime.strptime(trange_start, '%Y-%m-%d')
+    # Save raw (pre-despike) satellite output for diagnostics/plotting.
+    raw_output_dir = dt_start.strftime('L1_raw/%Y/%m/%d')
+    os.makedirs(raw_output_dir, exist_ok=True)
+    raw_output_file = os.path.join(raw_output_dir, f'L1_{sat_name}.dat')
+    _write_l1_dat(
+        df_final,
+        raw_output_file,
+        f'Produced from {sat_name} CDAWeb CDFs (raw)',
+    )
+    print(f'Saved {raw_output_file}')
+
+    # Despike and fill only short gaps before writing the filtered file.
+    # Long outages stay NaN to avoid synthetic long flat/ramp segments.
+    df_filtered = despike(df_final)
+    df_filtered = interpolate_with_limits(df_filtered, INTERP_LIMITS)
+
     output_dir = dt_start.strftime('L1/%Y/%m/%d')
     os.makedirs(output_dir, exist_ok=True)
-
-    # Write per-satellite L1 text file.
     output_file = os.path.join(output_dir, f'L1_{sat_name}.dat')
-    with open(output_file, 'w', encoding='utf-8') as f:
-        f.write(f'Produced from {sat_name} CDAWeb CDFs (nT, km/s, cm^-3, K)\n')
-        f.write('year  mo  dy  hr  mn  sc msc Bx By Bz Ux Uy Uz rho T\n')
-        f.write('#START\n')
-
-        for t, row in df_final.iterrows():
-            f.write(
-                f"{t.year:4d} {t.month:2d} {t.day:2d} {t.hour:2d} {t.minute:2d} {t.second:2d} {t.microsecond//1000:3d} "
-                f"{row['Bx']:8.2f} {row['By']:8.2f} {row['Bz']:8.2f} "
-                f"{row['Ux']:9.2f} {row['Uy']:9.2f} {row['Uz']:9.2f} "
-                f"{row['rho']:9.4f} {row['T']:10.1f}\n"
-            )
-
+    _write_l1_dat(
+        df_filtered,
+        output_file,
+        f'Produced from {sat_name} CDAWeb CDFs (filtered)',
+    )
     print(f'Saved {output_file}')
 
     # Remove raw CDFs once we have daily output files.
@@ -246,32 +261,31 @@ def process_satellite_ngdc(day, data_dir, trange_start, trange_end, cleanup=True
         df_final['T'] = np.nan
     df_final.loc[df_final['T'] > 1e9, 'T'] = np.nan
 
-    # Despike and fill short gaps before writing the per-satellite file.
-    # No limit here — any remaining gaps the CDF source couldn't fill are
-    # interpolated over entirely; the combine step's quality checks flag
-    # contaminated intervals independently.
-    df_final = despike(df_final)
-    df_final = df_final.interpolate(method='time', limit_area='inside')
-
     dt_start = datetime.strptime(trange_start, '%Y-%m-%d')
+    # Save raw (pre-despike) DSCOVR output for diagnostics/plotting.
+    raw_output_dir = dt_start.strftime('L1_raw/%Y/%m/%d')
+    os.makedirs(raw_output_dir, exist_ok=True)
+    raw_output_file = os.path.join(raw_output_dir, 'L1_dscovr.dat')
+    _write_l1_dat(
+        df_final,
+        raw_output_file,
+        'Produced from DSCOVR NOAA NGDC NetCDF (raw)',
+    )
+    print(f'Saved {raw_output_file}')
+
+    # Despike and fill only short gaps before writing the filtered file.
+    # Long outages stay NaN to avoid synthetic long flat/ramp segments.
+    df_filtered = despike(df_final)
+    df_filtered = interpolate_with_limits(df_filtered, INTERP_LIMITS)
+
     output_dir = dt_start.strftime('L1/%Y/%m/%d')
     os.makedirs(output_dir, exist_ok=True)
     output_file = os.path.join(output_dir, 'L1_dscovr.dat')
-
-    # Write DSCOVR daily L1 file.
-    with open(output_file, 'w', encoding='utf-8') as f:
-        f.write('Produced from DSCOVR NOAA NGDC NetCDF (nT, km/s, cm^-3, K)\n')
-        f.write('year  mo  dy  hr  mn  sc msc Bx By Bz Ux Uy Uz rho T\n')
-        f.write('#START\n')
-        for t, row in df_final.iterrows():
-            f.write(
-                f"{t.year:4d} {t.month:2d} {t.day:2d} {t.hour:2d} {t.minute:2d} "
-                f"{t.second:2d} {t.microsecond//1000:3d} "
-                f"{row['Bx']:8.2f} {row['By']:8.2f} {row['Bz']:8.2f} "
-                f"{row['Ux']:9.2f} {row['Uy']:9.2f} {row['Uz']:9.2f} "
-                f"{row['rho']:9.4f} {row['T']:10.1f}\n"
-            )
-
+    _write_l1_dat(
+        df_filtered,
+        output_file,
+        'Produced from DSCOVR NOAA NGDC NetCDF (filtered)',
+    )
     print(f'Saved {output_file}')
 
     # Delete temporary NGDC downloads when requested.

@@ -6,9 +6,13 @@ plots/
 
 # Data 
 L1/
+L1_raw/
 
-# Debug Work 
+# Debug Work
 scratch/
+
+# Claude Code 
+.claude/
 
 # Python
 __pycache__/

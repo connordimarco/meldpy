@@ -6,11 +6,9 @@ Combines per-satellite L1 .dat files into a single merged output.
 Core responsibilities:
   - Fills short intra-satellite gaps before merging.
   - Calls score_all_plasma() to obtain per-satellite quality bad-masks.
-  - Selects the best available source for every variable/minute using a
-    priority hierarchy: median (3-sat) > WIND > ACE/DSCOVR rules.
-  - Applies a continuity guard to prevent large jumps when the source
-    satellite changes.
-  - Writes L1_combined.dat (with nSat and satUsed provenance columns) and
+  - Selects the best available source for every variable/minute using
+    agreement-first rules plus previous-value continuity fallback.
+  - Writes L1_combined.dat (with nSat provenance) and
     ballistically propagated products (IMF_14Re.dat, IMF_32Re.dat).
   - Optionally uses prev_day / next_day context to warm up rolling filters
     across day boundaries before slicing today's data for output.
@@ -23,6 +21,7 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
+from l1_combine_T import combine_temperature
 from l1_filters import despike
 from l1_propagation import ballistic_propagation
 from l1_quality import score_all_plasma
@@ -47,44 +46,29 @@ def _switch_threshold(col):
         'Uy': 40.0,
         'Uz': 40.0,
         'rho': 2.0,
-        'T': 50000.0,
     }
     return thresholds.get(col, np.inf)
 
 
-def _preferred_source(col, available_codes):
-    """Determine ideal source given available satellites.
+def _agree(v1, v2, col):
+    """Return True when two values are close enough to be considered agreeing."""
+    return abs(v1 - v2) <= _switch_threshold(col)
 
-    Quality filtering is applied upstream (bad satellites removed from
-    available_codes before this function is called), so no quality flag
-    parameter is needed here.
 
-    Parameters
-    ----------
-    col : str
-        Variable name (e.g. 'Ux', 'rho').
-    available_codes : list[int]
-        Satellite codes with non-NaN, quality-passed values this minute.
+def _fallback_source(values, available_codes, prev_value):
+    """Fallback source when no pair agrees.
+
+    Startup (no previous value): prefer WIND when available.
+    Steady-state: choose source closest to previous output value.
     """
-    if len(available_codes) == 1:
-        return available_codes[0]
-
-    # WIND is always top choice when present.
+    if np.isfinite(prev_value):
+        return min(available_codes, key=lambda c: abs(values[c] - prev_value))
     if 3 in available_codes:
         return 3
-
-    # ACE + DSCOVR only.
-    if 1 in available_codes and 2 in available_codes:
-        if col == 'rho':
-            return 2          # DSCOVR density preferred.
-        if col in ['Ux', 'Uy', 'Uz', 'T']:
-            return 1
-
-    return None
+    return available_codes[0]
 
 
-def _select_column_with_continuity(col, sat_series, bad_masks=None,
-                                    use_hierarchy=False):
+def _select_column_with_continuity(col, sat_series, bad_masks=None):
     """Merge one variable across satellites with continuity and quality logic.
 
     Parameters
@@ -96,14 +80,9 @@ def _select_column_with_continuity(col, sat_series, bad_masks=None,
     bad_masks : dict[int, dict[str, pd.Series]] or None
         Per-satellite, per-variable boolean masks from the quality scorer.
         ``bad_masks[sat_code][var]`` is True where that satellite is bad.
-    use_hierarchy : bool
-        When True (default) apply the priority rules (WIND > ACE > DSCOVR).
-        When False, average all available quality-passed satellites so that
-        no single spacecraft is preferred over another.
     """
     index = sat_series['ace'].index
     out_vals = np.full(len(index), np.nan, dtype=float)
-    out_src = np.zeros(len(index), dtype=int)
     out_nsat = np.zeros(len(index), dtype=int)
 
     prev_value = np.nan
@@ -130,43 +109,41 @@ def _select_column_with_continuity(col, sat_series, bad_masks=None,
         if n_sat == 0:
             continue
 
-        if n_sat == 3:
+        if n_sat == 1:
+            out_vals[i] = values[available[0]]
+            prev_value = out_vals[i]
+            continue
+
+        # Agreement-first logic:
+        #  - all 3 agree -> median
+        #  - any agreeing pair -> mean of that pair
+        #  - none agree -> fallback source (WIND at startup, else closest to prev)
+        pairs = []
+        for p_idx, c1 in enumerate(available):
+            for c2 in available[p_idx + 1:]:
+                if _agree(values[c1], values[c2], col):
+                    pairs.append((c1, c2))
+
+        if n_sat == 3 and len(pairs) == 3:
             out_vals[i] = np.median([values[1], values[2], values[3]])
-            out_src[i] = 0
             prev_value = out_vals[i]
             continue
 
-        if n_sat == 2 and not use_hierarchy:
-            out_vals[i] = np.mean(list(values.values()))
-            out_src[i] = 0
+        if pairs:
+            best_pair = min(pairs, key=lambda p: abs(
+                values[p[0]] - values[p[1]]))
+            out_vals[i] = 0.5 * (values[best_pair[0]] + values[best_pair[1]])
             prev_value = out_vals[i]
             continue
 
-        if n_sat == 2 and col in ['Bx', 'By', 'Bz'] and 1 in available and 2 in available:
-            out_vals[i] = np.mean([values[1], values[2]])
-            out_src[i] = 0
-            prev_value = out_vals[i]
-            continue
-
-        candidate = _preferred_source(col, available)
-        if candidate is None:
-            candidate = available[0]
-
-        # Continuity guard: if the candidate would jump too far from the
-        # previous output value, pick whichever available satellite is
-        # closest.
-        if np.isfinite(prev_value) and abs(values[candidate] - prev_value) > _switch_threshold(col):
-            closest = min(available, key=lambda c: abs(values[c] - prev_value))
-            candidate = closest
-
+        candidate = _fallback_source(values, available, prev_value)
         out_vals[i] = values[candidate]
-        out_src[i] = candidate
         prev_value = out_vals[i]
 
-    return pd.Series(out_vals, index=index), pd.Series(out_src, index=index), pd.Series(out_nsat, index=index)
+    return pd.Series(out_vals, index=index), pd.Series(out_nsat, index=index)
 
 
-def combine_data_priority(data_map, master_grid, use_hierarchy=False):
+def combine_data_priority(data_map, master_grid):
     # Align each satellite to the same timeline before merging.
     df_ace = _fill_short_gaps(data_map.get('ace', pd.DataFrame(
         index=master_grid)).reindex(master_grid))
@@ -179,10 +156,10 @@ def combine_data_priority(data_map, master_grid, use_hierarchy=False):
     print('  Running plasma quality assessment for all satellites...')
     all_bad_masks = score_all_plasma(df_ace, df_dsc, df_win)
 
-    cols = ['Bx', 'By', 'Bz', 'Ux', 'Uy', 'Uz', 'rho', 'T']
-    plasma_cols = {'Ux', 'Uy', 'Uz', 'rho', 'T'}
+    # T is excluded here — handled separately by combine_temperature().
+    cols = ['Bx', 'By', 'Bz', 'Ux', 'Uy', 'Uz', 'rho']
+    plasma_cols = {'Ux', 'Uy', 'Uz', 'rho'}
     df_combined = pd.DataFrame(index=master_grid, columns=cols)
-    src_map = {}
     nsat_map = {}
 
     # Process each physical variable with priority + continuity rules.
@@ -196,14 +173,12 @@ def combine_data_priority(data_map, master_grid, use_hierarchy=False):
         # Quality masks for plasma variables; None for magnetic field.
         col_masks = all_bad_masks if col in plasma_cols else None
 
-        values, src_codes, n_sat = _select_column_with_continuity(
+        values, n_sat = _select_column_with_continuity(
             col,
             sat_series,
             bad_masks=col_masks,
-            use_hierarchy=use_hierarchy,
         )
         df_combined[col] = values
-        src_map[col] = src_codes
         nsat_map[col] = n_sat
 
     # Interpolate short NaN gaps left by quality-gating.
@@ -212,20 +187,19 @@ def combine_data_priority(data_map, master_grid, use_hierarchy=False):
 
     provenance = pd.DataFrame(index=master_grid)
     provenance['nSat'] = nsat_map['Ux'].astype('Int64')
-    provenance['satUsed'] = src_map['Ux'].astype('Int64')
 
     return df_combined, provenance
 
 
 def create_combined_l1_files(day, prev_day=None, next_day=None,
-                             boundaries_re=(14, 32), use_hierarchy=False):
+                             boundaries_re=(14, 32)):
     """Build combined L1 products for *day* using rolling neighbour context.
 
     When *prev_day* and/or *next_day* are supplied the quality-scoring,
     satellite-selection, and despiking algorithms run over the full
     multi-day window so that day-boundary artefacts (cold-start of rolling
-    filters, ``limit_growth`` warm-up, etc.) are eliminated.  Only the
-    portion corresponding to *day* is written to disk.
+    filters, etc.) are eliminated.  Only the portion corresponding to *day*
+    is written to disk.
     """
     dt_start = datetime.strptime(day, '%Y-%m-%d')
     output_dir = dt_start.strftime('L1/%Y/%m/%d')
@@ -270,13 +244,15 @@ def create_combined_l1_files(day, prev_day=None, next_day=None,
     master_grid = pd.date_range(start=window_start, periods=n_minutes,
                                 freq='1min')
 
-    # Quality-score + satellite-select over the full window.
-    df_combined, provenance = combine_data_priority(data_map, master_grid,
-                                                    use_hierarchy=use_hierarchy)
+    # Quality-score + satellite-select over the full window (B and plasma, not T).
+    df_combined, provenance = combine_data_priority(data_map, master_grid)
 
     # Despike over the full window so filters are warmed-up at day edges.
     if 'rho' in df_combined.columns or 'Ux' in df_combined.columns:
         df_combined = despike(df_combined)
+
+    # Combine T separately: median of available satellites + 3-point median smooth.
+    df_combined['T'] = combine_temperature(data_map, master_grid)
 
     # ---- Slice out only *today* for file output ----
     today_start = pd.Timestamp(day)
@@ -286,29 +262,26 @@ def create_combined_l1_files(day, prev_day=None, next_day=None,
     df_today = df_combined.loc[today_mask].copy()
     prov_today = provenance.loc[today_mask].copy()
 
-    # Final pass: linearly interpolate any NaN gaps that exceed the
-    # per-variable rolling fill performed inside combine_data_priority.
+    # Final pass: fill any remaining NaN gaps with linear interpolation.
     df_today = df_today.interpolate(method='linear')
 
     # Write unpropagated combined file.
     outfile_comb = os.path.join(output_dir, 'L1_combined.dat')
     with open(outfile_comb, 'w', encoding='utf-8') as f:
         f.write(
-            f'Combined L1 Data for {day} (Despiked, Unpropagated) (GSM nT, km/s, cm^-3, K)\n')
-        f.write('year  mo  dy  hr  mn  sc msc Bx By Bz Ux Uy Uz rho T nSat satUsed\n')
+            f'Combined L1 Data for {day} (Unpropagated) (GSM nT, km/s, cm^-3, K)\n')
+        f.write('year  mo  dy  hr  mn  sc msc Bx By Bz Ux Uy Uz rho T nSat\n')
         f.write('#START\n')
         for t, row in df_today.iterrows():
             if pd.isna(row['Bx']):
                 continue
             n_sat_val = int(prov_today.at[t, 'nSat']) if pd.notna(
                 prov_today.at[t, 'nSat']) else 0
-            sat_used_val = int(prov_today.at[t, 'satUsed']) if pd.notna(
-                prov_today.at[t, 'satUsed']) else 0
             f.write(
                 f"{t.year:4d} {t.month:2d} {t.day:2d} {t.hour:2d} {t.minute:2d} {t.second:2d} {t.microsecond//1000:3d} "
                 f"{row['Bx']:8.2f} {row['By']:8.2f} {row['Bz']:8.2f} "
                 f"{row['Ux']:9.2f} {row['Uy']:9.2f} {row['Uz']:9.2f} "
-                f"{row['rho']:9.4f} {row['T']:10.1f} {n_sat_val:2d} {sat_used_val:2d}\n"
+                f"{row['rho']:9.4f} {row['T']:10.1f} {n_sat_val:2d}\n"
             )
     print(f'Created {outfile_comb}')
 
