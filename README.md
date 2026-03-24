@@ -4,6 +4,60 @@ Downloads, quality-screens, and combines 1-minute solar wind from **ACE**, **DSC
 
 ---
 
+## Data Flow
+
+```mermaid
+flowchart LR
+    subgraph SRC["Data Sources"]
+        ACE_s["ACE · CDAWeb\nAC_H0_MFI  AC_H0_SWE"]
+        DSC_s["DSCOVR · NOAA NGDC\nm1m · f1m"]
+        WND_s["WIND · CDAWeb\nWI_H0_MFI  WI_H1_SWE"]
+    end
+
+    subgraph PIPE["l1_pipeline.py — Per-Satellite"]
+        DL["Download\nl1_downloaders.py"]
+        RD["Read CDF / gzipped-NC\nl1_readers.py"]
+        RS["Resample → 1-min grid\nGSE→GSM  ·  vth→T(K)"]
+        DS1["despike()\n3-point median\nBx By Bz · Ux Uy Uz · rho"]
+        DL --> RD --> RS --> DS1
+    end
+
+    L1R[/"L1_raw/YYYY/MM/DD/\nL1_*.dat  untouched"/]
+    L1F[/"L1/YYYY/MM/DD/\nL1_*.dat  L1_satpos.dat"/]
+
+    subgraph COMB["l1_combine.py — create_combined_l1_files()"]
+        LD["Load filtered .dat files\n±1-day context window"]
+        QS["score_all_plasma()  l1_quality.py\n① outlier — odd-one-out when 2-of-3 agree\n② physical range — implausible values\n③ NaN-fraction — data-gap rate in rolling window\n④ flat plateau — stuck instrument readings\n⑤ near-zero Uy/Uz — DSCOVR artifact"]
+        VS["Per-variable selection  Bx By Bz · Ux Uy Uz · rho\n3 agree → median\n2 agree → pair mean\n0 agree → closest-to-prev"]
+        DS2["despike()\non combined B + plasma stream"]
+        CT["combine_temperature()  l1_combine_T.py\n① 3-pt median  ② log-std spikiness filter\n③ geometric median  ④ 3-pt median"]
+        SL["Slice to target day\nfill residual NaN gaps"]
+        LD --> QS --> VS --> DS2 --> CT --> SL
+    end
+
+    L1C[/"L1/YYYY/MM/DD/\nL1_combined.dat  nSat provenance"/]
+
+    subgraph PROP["l1_propagation.py"]
+        BP["ballistic_propagation()\ncausality-enforced travel time"]
+    end
+
+    IMF14[/"IMF_14Re.dat"/]
+    IMF32[/"IMF_32Re.dat"/]
+
+    SRC --> PIPE
+    RS  --> L1R
+    DS1 --> L1F
+    L1F --> LD
+    SL  --> L1C
+    L1C --> BP
+    BP  --> IMF14
+    BP  --> IMF32
+```
+
+> The standalone source is [`pipeline_flowchart.mmd`](pipeline_flowchart.mmd) — open in [Mermaid Live Editor](https://mermaid.live) to export as PDF or SVG.
+
+---
+
 ## File Inventory
 
 | File | Role |
@@ -18,7 +72,8 @@ Downloads, quality-screens, and combines 1-minute solar wind from **ACE**, **DSC
 | `l1_downloaders.py` | CDAWeb and NOAA NGDC download helpers |
 | `l1_coordinates.py` | GSE → GSM rotation via SpacePy |
 | `plot_l1_may2024.py` | Diagnostic 4-column multi-panel plots (raw, filtered, combined, propagated overlay) |
-| `l1_example.ipynb` | End-to-end driver notebook for date ranges |
+| `l1_example.py` | End-to-end driver script for date ranges (`# %%` cells, VS Code interactive) |
+| `pipeline_flowchart.mmd` | Mermaid source for the data-flow diagram above |
 
 ---
 
@@ -102,7 +157,7 @@ After quality gating, each variable is merged minute-by-minute with an agreement
 
 T is handled separately because it spans orders of magnitude, and real propagation delays between spacecraft are indistinguishable from sensor disagreement. Quality gating on T consistently over-flags during solar wind transitions.
 
-Three steps:
+Four steps:
 1. **Per-satellite 3-point median** to remove single-minute spikes.
 2. **Per-satellite spikiness filter**: rolling log-std over an 11-minute window; minutes exceeding the threshold are excluded (catches DSCOVR oscillation episodes).
 3. **Geometric median**: `exp(median(log(T)))` across available satellites. Works correctly at any spread — no threshold, no source-switching. With 2 satellites this is the geometric mean; with 3 it returns the log-space middle value.

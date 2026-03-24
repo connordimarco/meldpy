@@ -1,0 +1,50 @@
+flowchart LR
+    %% ── Data Sources ──────────────────────────────────────────────────────────
+    subgraph SRC["Data Sources"]
+        ACE_s["ACE · CDAWeb\nAC_H0_MFI  AC_H0_SWE"]
+        DSC_s["DSCOVR · NOAA NGDC\nm1m · f1m"]
+        WND_s["WIND · CDAWeb\nWI_H0_MFI  WI_H1_SWE"]
+    end
+
+    %% ── Per-satellite pipeline ────────────────────────────────────────────────
+    subgraph PIPE["l1_pipeline.py — Per-Satellite"]
+        DL["Download\nl1_downloaders.py"]
+        RD["Read CDF / gzipped-NC\nl1_readers.py"]
+        RS["Resample → 1-min grid\nGSE→GSM  ·  vth→T(K)"]
+        DS1["despike()\n3-point median\nBx By Bz · Ux Uy Uz · rho"]
+        DL --> RD --> RS --> DS1
+    end
+
+    L1R[/"L1_raw/YYYY/MM/DD/\nL1_ace.dat\nL1_dscovr.dat\nL1_wind.dat"/]
+    L1F[/"L1/YYYY/MM/DD/\nL1_ace.dat\nL1_dscovr.dat\nL1_wind.dat\nL1_satpos.dat"/]
+
+    %% ── Multi-satellite combine ───────────────────────────────────────────────
+    subgraph COMB["l1_combine.py — create_combined_l1_files()"]
+        LD["Load filtered .dat files\n±1-day context window"]
+        QS["score_all_plasma()  ·  l1_quality.py\n① outlier — odd-one-out when 2-of-3 agree\n② physical range — implausible values\n③ NaN-fraction — data-gap rate in rolling window\n④ flat plateau — stuck instrument readings\n⑤ near-zero Uy/Uz — DSCOVR Faraday-cup artifact"]
+        VS["Per-variable selection  Bx By Bz · Ux Uy Uz · rho\nBad-masked values excluded from plasma selection\n3 agree → median\n2 agree → pair mean\n0 agree → closest-to-prev"]
+        DS2["despike()\non combined B + plasma stream"]
+        CT["combine_temperature()  ·  l1_combine_T.py\n① 3-point median — per-satellite spike removal\n② log-std spikiness filter — rolling 11-min window\n③ geometric median — exp(median(log(T)))\n④ 3-point rolling median — residual smoothing"]
+        SL["Slice to target day\nfill residual NaN gaps"]
+        LD --> QS --> VS --> DS2 --> CT --> SL
+    end
+
+    L1C[/"L1/YYYY/MM/DD/\nL1_combined.dat\nwith nSat provenance"/]
+
+    %% ── Propagation ──────────────────────────────────────────────────────────
+    subgraph PROP["l1_propagation.py"]
+        BP["ballistic_propagation()\ncausality-enforced travel time\nfrom satellite position to target boundary"]
+    end
+
+    IMF14[/"IMF_14Re.dat"/]
+    IMF32[/"IMF_32Re.dat"/]
+
+    %% ── Flow ─────────────────────────────────────────────────────────────────
+    SRC --> PIPE
+    RS  -->  L1R
+    DS1 -->  L1F
+    L1F -->  LD
+    SL  -->  L1C
+    L1C -->  BP
+    BP  -->  IMF14
+    BP  -->  IMF32
