@@ -7,7 +7,6 @@ Downloads, quality-screens, and combines 1-minute solar wind from **ACE**, **DSC
 ## Data Flow
 
 ```mermaid
-%%{init: {'theme': 'base', 'themeVariables': {'fontSize': '18px', 'fontFamily': 'arial'}}}%%
 flowchart TD
     subgraph PIPE["l1_pipeline.py  —  Per-Satellite Processing"]
         ACE["ACE · CDAWeb\nAC_H0_MFI  AC_H0_SWE"]
