@@ -5,7 +5,7 @@ Signal-quality filters applied to the combined L1 time series.
 
 Public entry points:
   - despike()              — centered 3-point median on B and plasma.
-  - smooth_transitions()   — boxcar smoothing at large source-change steps (plasma only).
+  - smooth_transitions()   — boxcar smoothing at source-change steps exceeding a magnitude threshold (plasma only).
 
 Shared utilities:
   - INTERP_LIMITS        — per-variable max-gap limits for interpolation.
@@ -109,14 +109,14 @@ def _apply_boxcar(smoothed, original, i, w):
     smoothed[lo:hi] = rolled[(lo - ext_lo):(lo - ext_lo) + (hi - lo)]
 
 
-def smooth_transitions(df, cmax=_CMAX_DEFAULT, wmax=_WMAX_DEFAULT,
-                       rate=_RATE_DEFAULT):
-    """Smooth large step changes in plasma output using boxcar averaging.
+def smooth_transitions(df, source_changed=None, cmax=_CMAX_DEFAULT,
+                       wmax=_WMAX_DEFAULT, rate=_RATE_DEFAULT):
+    """Smooth large step changes in plasma output at source transitions.
 
-    For each plasma column finds minute-to-minute jumps where the magnitude
-    C exceeds *cmax*.  Replaces the values in a window of width W around the
-    step with a rolling mean of the same width computed from the *original*
-    (pre-smoothing) values.  This turns a hard step into a gradual ramp.
+    For each plasma column, only considers minutes where the contributing
+    satellite set changed (``source_changed[col][i]`` is True).  At those
+    minutes, if the jump magnitude C also exceeds *cmax*, replaces the values
+    in a window of width W with a rolling mean of the original values.
 
         W = nint(min(wmax, C / rate))   [minutes]
 
@@ -124,6 +124,9 @@ def smooth_transitions(df, cmax=_CMAX_DEFAULT, wmax=_WMAX_DEFAULT,
     ----------
     df : pd.DataFrame
         Combined L1 data (must be on a 1-minute grid, no NaN gaps).
+    source_changed : dict[str, pd.Series of bool] or None
+        Per-column boolean mask that is True at minutes where the source
+        changed.  If None, all minutes are candidates (legacy behaviour).
     cmax : float
         Minimum jump magnitude to trigger smoothing.
         Units: % for rho, T, |Ux|; km/s for Uy, Uz.
@@ -135,7 +138,7 @@ def smooth_transitions(df, cmax=_CMAX_DEFAULT, wmax=_WMAX_DEFAULT,
     Returns
     -------
     pd.DataFrame
-        Copy of *df* with large plasma transitions smoothed.
+        Copy of *df* with source-transition steps smoothed.
     """
     out = df.copy()
 
@@ -143,10 +146,13 @@ def smooth_transitions(df, cmax=_CMAX_DEFAULT, wmax=_WMAX_DEFAULT,
         if col not in out.columns:
             continue
 
+        sc = source_changed.get(col) if source_changed is not None else None
         original = out[col].values.astype(float)
         smoothed = original.copy()
 
         for i in range(1, len(original)):
+            if sc is not None and not bool(sc.iloc[i]):
+                continue  # same source as previous minute — preserve original
             m1, m2 = original[i - 1], original[i]
             if not (np.isfinite(m1) and np.isfinite(m2)):
                 continue

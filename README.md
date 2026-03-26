@@ -27,6 +27,7 @@ flowchart TD
 
     subgraph COMB["l1_combine.py  —  create_combined_l1_files()"]
         LD["Load per-satellite .dat files\n±1-day context window\nalign all satellites to common 1-min master grid"]
+        PR["Propagate to common reference position\nread L1_satpos.dat  ·  find satellite closest to Earth  min X\nshift farther satellites forward in time  ballistic_propagation\nall satellites now represent same parcel at x_ref"]
 
         subgraph QC["score_all_plasma()  ·  l1_quality.py  —  plasma only: Ux  Uy  Uz  rho"]
             Q1["① Outlier detection\nflag odd-one-out when the other two satellites agree\npairwise rolling median  ·  per-variable absolute or ratio threshold"]
@@ -37,7 +38,6 @@ flowchart TD
         end
 
         VS["Per-variable satellite selection  ·  Bx  By  Bz  ·  Ux  Uy  Uz  ·  rho\nPlasma: quality bad-masks applied before selection\nMagnetic field: bypasses quality gate\n3 satellites agree within threshold  →  median of all three\n2 satellites agree within threshold  →  mean of closest agreeing pair\nNone agree  →  fallback: closest to previous output  WIND at startup\n  locked source switches only after 3 consecutive minutes of preference"]
-        DS2["despike()  ·  l1_filters.py\n3-point centered median on combined B + plasma stream"]
 
         subgraph TC["combine_temperature()  ·  l1_combine_T.py\nT handled independently of B and plasma"]
             T1["① 3-point median  per satellite\nremoves single-minute spikes in each T stream"]
@@ -47,14 +47,14 @@ flowchart TD
             T1 --> T2 --> T3 --> T4
         end
 
-        ST["smooth_transitions()  ·  l1_filters.py\nboxcar smoothing at large source-change steps  plasma only\nC > 20  %  for rho  T  Ux    km/s  for Uy  Uz\nW = round  min  60  C÷5   minutes"]
+        ST["smooth_transitions()  ·  l1_filters.py\nboxcar smoothing only at satellite source-switch minutes  plasma only\nC > 20  %  for rho  T  Ux    km/s  for Uy  Uz\nW = round  min  60  C÷5   minutes\nreal solar-wind jumps not smoothed"]
         SL["Slice combined window to target day\nfill residual NaN gaps  linear interpolation  ≤ 30 min"]
 
-        LD  --> QC
-        QC  --> T1
+        LD  --> PR
+        PR  --> QC
+        PR  --> T1
         Q1 & Q2 & Q3 & Q4 & Q5 --> VS
-        VS  --> DS2
-        DS2 --> ST
+        VS  --> ST
         T4  --> ST
         ST  --> SL
     end
@@ -62,7 +62,7 @@ flowchart TD
     L1C[/"L1/YYYY/MM/DD/  ·  L1_combined.dat\nnSat  —  number of quality-passing satellites contributing Ux each minute"/]
 
     subgraph PROP["l1_propagation.py  —  Ballistic Propagation"]
-        BP["ballistic_propagation()\ntravel time  =  ΔX_GSM  /  Ux\ncausality-enforced monotone time mapping\nfrom satellite GSM X position to target boundary"]
+        BP["ballistic_propagation()\ntravel time  =  ΔX_GSM  /  Ux\ncausality-enforced monotone time mapping\nfrom x_ref  closest satellite position  to target boundary"]
     end
 
     IMF14[/"IMF_14Re.dat  —  boundary at X = −14 Rₑ"/]
@@ -89,7 +89,7 @@ flowchart TD
 | `l1_readers.py` | CDF and gzipped NetCDF readers; ASCII `.dat` reader |
 | `l1_downloaders.py` | CDAWeb and NOAA NGDC download helpers |
 | `l1_coordinates.py` | GSE → GSM rotation via SpacePy |
-| `plot_l1_may2024.py` | Diagnostic 5-column multi-panel plots (raw, filtered, combined, 14 Re, 32 Re) |
+| `plot_l1_may2024.py` | Diagnostic plots: 5-column per-variable figure (`plot_day`) and propagation-step diagram (`plot_propagation_diagram`) |
 | `l1_example.py` | End-to-end driver script for date ranges (`# %%` cells, VS Code interactive) |
 | `pipeline_flowchart.mmd` | Mermaid source for the data-flow diagram above |
 
@@ -161,6 +161,18 @@ Applied to **plasma variables only (not B, not T)**. Each satellite/variable/min
 
 ---
 
+## Propagate-to-Reference (`l1_combine.py`)
+
+Before combining, the pipeline aligns all satellites to a common reference position so that the merge compares measurements of the same solar-wind parcel rather than simultaneous but spatially-separated snapshots.
+
+1. Read noon GSM X positions for all three satellites from `L1_satpos.dat`.
+2. Identify the satellite closest to Earth (smallest X).
+3. Ballistically propagate each farther satellite's time series forward to that reference X using `ballistic_propagation()` — the same algorithm used for the final propagation to Earth.
+4. All subsequent steps (quality scoring, satellite selection, temperature combine) operate on the time-aligned data.
+5. The final propagation to 14/32 Re uses this reference X as the source position.
+
+---
+
 ## Source Selection (`l1_combine.py`)
 
 After quality gating, each variable is merged minute-by-minute with an agreement-first rule:
@@ -173,9 +185,9 @@ After quality gating, each variable is merged minute-by-minute with an agreement
 
 ## Transition Smoothing (`l1_filters.smooth_transitions()`)
 
-Applied after combining B, plasma, and T but before writing output. Detects large minute-to-minute steps in each plasma column and replaces the surrounding window with a boxcar mean computed from the original values, turning a hard step into a gradual ramp.
+Applied after combining B, plasma, and T but before writing output. At minutes where the contributing satellite set changes, detects large steps and replaces the surrounding window with a boxcar mean computed from the original values, turning a hard source-switch artifact into a gradual ramp. Real solar-wind discontinuities that do not coincide with a source switch are left untouched.
 
-- **Trigger**: jump magnitude C exceeds `Cmax = 20` (% for `rho`, `T`, `|Ux|`; km/s for `Uy`, `Uz`)
+- **Trigger**: satellite source changed AND jump magnitude C exceeds `Cmax = 20` (% for `rho`, `T`, `|Ux|`; km/s for `Uy`, `Uz`)
 - **Window width**: `W = round(min(Wmax, C / R))` minutes, with `Wmax = 60`, `R = 5`
 - Applied on the full multi-day context window so transitions near midnight have data on both sides.
 
@@ -195,13 +207,20 @@ Four steps:
 
 ## Plotting
 
-`plot_l1_may2024.py` generates 5-column diagnostic figures:
+`plot_l1_may2024.py` provides two diagnostic figures per day:
 
+**`plot_day(day)`** — 5-column per-variable figure saved to `plots/YYYY_MM_DD.png`:
 1. Raw satellites (`L1_raw`)
 2. Filtered satellites (`L1`)
 3. Combined (`L1_combined.dat`)
 4. Combined (black) + 14 Re propagated (red dotted)
 5. Combined (black) + 32 Re propagated (blue dotted)
+
+**`plot_propagation_diagram(day)`** — propagation step diagram saved to `plots/YYYY_MM_DD_propagation.png`:
+- Top panel: satellite X positions (Re) with arrows to x_ref
+- ① Vx at native satellite positions
+- ② Vx after propagation to x_ref (time-aligned)
+- ③ Combined at x_ref vs combined at 32 Re
 
 ---
 

@@ -1,5 +1,5 @@
 # %%
-from plot_l1_may2024 import plot_day
+from plot_l1_may2024 import plot_day, plot_propagation_diagram
 import l1_quality
 import l1_filters
 import l1_combine
@@ -76,6 +76,7 @@ for i, day in enumerate(days):
     create_combined_l1_files(day, prev_day=prev_day, next_day=next_day)
     try:
         plot_day(day)
+        plot_propagation_diagram(day)
     except Exception as exc:
         print(f"  Plot error for {day}: {exc}")
     print(f"Completed: {day}")

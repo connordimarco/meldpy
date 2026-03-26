@@ -22,7 +22,7 @@ import numpy as np
 import pandas as pd
 
 from l1_combine_T import combine_temperature
-from l1_filters import despike, smooth_transitions
+from l1_filters import smooth_transitions
 from l1_propagation import ballistic_propagation
 from l1_quality import score_all_plasma
 from l1_readers import read_l1_data
@@ -89,6 +89,7 @@ def _select_column_with_continuity(col, sat_series, bad_masks=None):
     index = sat_series['ace'].index
     out_vals = np.full(len(index), np.nan, dtype=float)
     out_nsat = np.zeros(len(index), dtype=int)
+    out_source = [None] * len(index)   # frozenset of sat codes contributing each minute
 
     prev_value = np.nan
     locked_source = None   # satellite code currently committed in fallback path
@@ -118,6 +119,7 @@ def _select_column_with_continuity(col, sat_series, bad_masks=None):
 
         if n_sat == 1:
             out_vals[i] = values[available[0]]
+            out_source[i] = frozenset(available)
             prev_value = out_vals[i]
             continue
 
@@ -133,6 +135,7 @@ def _select_column_with_continuity(col, sat_series, bad_masks=None):
 
         if n_sat == 3 and len(pairs) == 3:
             out_vals[i] = np.median([values[1], values[2], values[3]])
+            out_source[i] = frozenset([1, 2, 3])
             prev_value = out_vals[i]
             continue
 
@@ -140,6 +143,7 @@ def _select_column_with_continuity(col, sat_series, bad_masks=None):
             best_pair = min(pairs, key=lambda p: abs(
                 values[p[0]] - values[p[1]]))
             out_vals[i] = 0.5 * (values[best_pair[0]] + values[best_pair[1]])
+            out_source[i] = frozenset(best_pair)
             prev_value = out_vals[i]
             continue
 
@@ -160,9 +164,40 @@ def _select_column_with_continuity(col, sat_series, bad_masks=None):
                 switch_count = 0
 
         out_vals[i] = values[locked_source]
+        out_source[i] = frozenset([locked_source])
         prev_value = out_vals[i]
 
-    return pd.Series(out_vals, index=index), pd.Series(out_nsat, index=index)
+    return (pd.Series(out_vals, index=index),
+            pd.Series(out_nsat, index=index),
+            pd.Series(out_source, index=index))
+
+
+def _read_sat_positions(pos_file):
+    """Return per-satellite noon X positions in km from L1_satpos.dat.
+
+    Returns dict with keys 'ace', 'dscovr', 'wind'. Missing values are NaN.
+    """
+    result = {'ace': np.nan, 'dscovr': np.nan, 'wind': np.nan}
+    if not os.path.exists(pos_file):
+        return result
+    try:
+        with open(pos_file, 'r', encoding='utf-8') as f:
+            data_started = False
+            for line in f:
+                if line.strip().startswith('#START'):
+                    data_started = True
+                    continue
+                if not data_started:
+                    continue
+                parts = line.split()
+                if len(parts) >= 15:
+                    result['ace']    = float(parts[6])  * 6371.0
+                    result['dscovr'] = float(parts[9])  * 6371.0
+                    result['wind']   = float(parts[12]) * 6371.0
+                    break
+    except Exception as e:
+        print(f'  Warning: Could not read position file ({e}).')
+    return result
 
 
 def combine_data_priority(data_map, master_grid):
@@ -183,6 +218,7 @@ def combine_data_priority(data_map, master_grid):
     plasma_cols = {'Ux', 'Uy', 'Uz', 'rho'}
     df_combined = pd.DataFrame(index=master_grid, columns=cols)
     nsat_map = {}
+    source_map = {}   # col -> pd.Series of frozenset(sat_codes)
 
     # Process each physical variable with priority + continuity rules.
     for col in cols:
@@ -195,13 +231,14 @@ def combine_data_priority(data_map, master_grid):
         # Quality masks for plasma variables; None for magnetic field.
         col_masks = all_bad_masks if col in plasma_cols else None
 
-        values, n_sat = _select_column_with_continuity(
+        values, n_sat, source = _select_column_with_continuity(
             col,
             sat_series,
             bad_masks=col_masks,
         )
         df_combined[col] = values
         nsat_map[col] = n_sat
+        source_map[col] = source
 
     # Interpolate short NaN gaps left by quality-gating.
     df_combined = df_combined.interpolate(
@@ -210,7 +247,7 @@ def combine_data_priority(data_map, master_grid):
     provenance = pd.DataFrame(index=master_grid)
     provenance['nSat'] = nsat_map['Ux'].astype('Int64')
 
-    return df_combined, provenance
+    return df_combined, provenance, source_map
 
 
 def create_combined_l1_files(day, prev_day=None, next_day=None,
@@ -266,12 +303,46 @@ def create_combined_l1_files(day, prev_day=None, next_day=None,
     master_grid = pd.date_range(start=window_start, periods=n_minutes,
                                 freq='1min')
 
+    # ---- Propagate satellites to a common reference position ----
+    # Find the satellite closest to Earth (smallest X) and shift all others
+    # forward in time to that X before combining.  This ensures the combine
+    # step compares measurements of the same solar-wind parcel.
+    pos_file = os.path.join(output_dir, 'L1_satpos.dat')
+    sat_x_km = _read_sat_positions(pos_file)
+
+    available_x = {sat: sat_x_km[sat]
+                   for sat in data_map
+                   if np.isfinite(sat_x_km.get(sat, np.nan))}
+    if available_x:
+        ref_sat = min(available_x, key=lambda s: available_x[s])
+        x_ref_km = available_x[ref_sat]
+        pos_summary = ', '.join(
+            f'{s.upper()}: {available_x[s] / 6371.0:.1f} Re'
+            for s in ('ace', 'dscovr', 'wind') if s in available_x
+        )
+        print(f'  Reference position: {ref_sat.upper()} at '
+              f'{x_ref_km / 6371.0:.1f} Re  ({pos_summary})')
+        for sat, df_sat in list(data_map.items()):
+            x_sat = available_x.get(sat, np.nan)
+            if not np.isfinite(x_sat) or x_sat <= x_ref_km:
+                continue
+            df_renamed = df_sat.rename(
+                columns={'Ux': 'Vx Velocity, km/s, GSE'})
+            orbit = pd.Series({'X_GSE': x_sat})
+            df_prop = ballistic_propagation(
+                orbit, df_renamed, target_x_km=x_ref_km)
+            data_map[sat] = df_prop.rename(
+                columns={'Vx Velocity, km/s, GSE': 'Ux'})
+    else:
+        x_ref_km = 1.5e6
+        print('  No satellite positions available; using default 1.5e6 km.')
+
     # Quality-score + satellite-select over the full window (B and plasma, not T).
-    df_combined, provenance = combine_data_priority(data_map, master_grid)
+    df_combined, provenance, source_map = combine_data_priority(data_map, master_grid)
 
     # Despike over the full window so filters are warmed-up at day edges.
-    if 'rho' in df_combined.columns or 'Ux' in df_combined.columns:
-        df_combined = despike(df_combined)
+    # if 'rho' in df_combined.columns or 'Ux' in df_combined.columns:
+    #     df_combined = despike(df_combined)
 
     # Combine T separately: median of available satellites + 3-point median smooth.
     df_combined['T'] = combine_temperature(data_map, master_grid)
@@ -279,7 +350,17 @@ def create_combined_l1_files(day, prev_day=None, next_day=None,
     # Smooth large step changes at source transitions (plasma only).
     # Applied on the full context window so the smoothing window has data
     # on both sides of transitions near midnight.
-    df_combined = smooth_transitions(df_combined)
+    # Build per-column boolean mask: True at minutes where the contributing
+    # satellite set changed relative to the previous minute.
+    source_changed = {}
+    for col, src in source_map.items():
+        vals = src.values
+        changed = np.zeros(len(vals), dtype=bool)
+        for k in range(1, len(vals)):
+            if vals[k] is not None and vals[k - 1] is not None:
+                changed[k] = vals[k] != vals[k - 1]
+        source_changed[col] = pd.Series(changed, index=src.index)
+    df_combined = smooth_transitions(df_combined, source_changed=source_changed)
 
     # ---- Slice out only *today* for file output ----
     today_start = pd.Timestamp(day)
@@ -312,34 +393,8 @@ def create_combined_l1_files(day, prev_day=None, next_day=None,
             )
     print(f'Created {outfile_comb}')
 
-    # Read mean ACE X position for travel-time propagation.
-    pos_file = os.path.join(output_dir, 'L1_satpos.dat')
-    mean_x_gse_km = 1.5e6
-
-    # Fallback keeps pipeline running if position file is missing.
-    if os.path.exists(pos_file):
-        try:
-            with open(pos_file, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
-                data_started = False
-                for line in lines:
-                    stripped = line.strip()
-                    if stripped.startswith('#START'):
-                        data_started = True
-                        continue
-                    if not data_started:
-                        continue
-                    parts = line.split()
-                    if len(parts) > 6:
-                        ax_re = float(parts[6])
-                        if not np.isnan(ax_re):
-                            mean_x_gse_km = ax_re * 6371.0
-                        break
-        except Exception as e:
-            print(
-                f'    Warning: Could not read position file ({e}). Using default 1.5e6 km.')
-
-    mock_orbit = pd.Series({'X_GSE': mean_x_gse_km})
+    # x_ref_km was determined during the propagate-to-reference step above.
+    mock_orbit = pd.Series({'X_GSE': x_ref_km})
 
     # Propagator expects Vx under this legacy column name.
     # Propagate only today's slice.

@@ -224,7 +224,11 @@ def process_satellite_ngdc(day, data_dir, trange_start, trange_end, cleanup=True
     print('\nProcessing DSCOVR (NGDC)...')
 
     # Download 1-minute plasma + mag products from NGDC.
-    paths = download_dscovr_ngdc(day, data_dir)
+    try:
+        paths = download_dscovr_ngdc(day, data_dir)
+    except RuntimeError as e:
+        print(f'  WARNING: DSCOVR unavailable — {e}')
+        paths = {}
 
     if 'f1m' in paths:
         df_plasma = nc_gz_to_df(paths['f1m'], 'time', _NGDC_F1M_VARS)

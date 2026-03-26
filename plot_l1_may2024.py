@@ -21,6 +21,7 @@ from matplotlib.lines import Line2D
 import numpy as np
 import pandas as pd
 
+from l1_propagation import ballistic_propagation
 from l1_readers import read_l1_data
 
 
@@ -220,6 +221,209 @@ def _add_legends(fig_axes):
 
 
 # ---------------------------------------------------------------------------
+# Propagation diagram
+# ---------------------------------------------------------------------------
+
+def _read_sat_positions_re(pos_file):
+    """Return per-satellite noon X positions in Re from L1_satpos.dat."""
+    result = {'ace': np.nan, 'dscovr': np.nan, 'wind': np.nan}
+    if not os.path.exists(pos_file):
+        return result
+    try:
+        with open(pos_file, 'r', encoding='utf-8') as f:
+            data_started = False
+            for line in f:
+                if line.strip().startswith('#START'):
+                    data_started = True
+                    continue
+                if not data_started:
+                    continue
+                parts = line.split()
+                if len(parts) >= 15:
+                    result['ace']    = float(parts[6])
+                    result['dscovr'] = float(parts[9])
+                    result['wind']   = float(parts[12])
+                    break
+    except Exception:
+        pass
+    return result
+
+
+def plot_propagation_diagram(day_str, output_dir='plots'):
+    """Generate a propagation-diagnostic figure for one day.
+
+    Top panel  : Schematic of satellite X positions and arrows to x_ref.
+    Bottom panel: Vx time series — native (faded), propagated to x_ref (solid),
+                  combined at x_ref (black), combined at 32 Re (purple).
+    Saved as plots/YYYY_MM_DD_propagation.png.
+    """
+    dt = datetime.strptime(day_str, '%Y-%m-%d')
+    filt_dir = dt.strftime('L1/%Y/%m/%d')
+
+    # ---- Positions ----
+    sat_x_re = _read_sat_positions_re(os.path.join(filt_dir, 'L1_satpos.dat'))
+    sat_x_km = {s: x * 6371.0 for s, x in sat_x_re.items()}
+
+    available = {s: sat_x_km[s] for s in sat_x_km if np.isfinite(sat_x_km[s])}
+    if not available:
+        print(f'  No position data for {day_str}, skipping propagation diagram.')
+        return
+    ref_sat = min(available, key=lambda s: available[s])
+    x_ref_km = available[ref_sat]
+    x_ref_re = x_ref_km / 6371.0
+
+    # ---- Load filtered per-satellite data ----
+    filt_sats = {}
+    for sat in ('ace', 'dscovr', 'wind'):
+        df = read_l1_data(os.path.join(filt_dir, f'L1_{sat}.dat'))
+        if not df.empty:
+            filt_sats[sat] = df
+
+    # ---- Propagate each satellite to x_ref ----
+    prop_sats = {}
+    for sat, df in filt_sats.items():
+        x_sat = sat_x_km.get(sat, np.nan)
+        if not np.isfinite(x_sat) or x_sat <= x_ref_km:
+            prop_sats[sat] = df
+        else:
+            df_ren = df.rename(columns={'Ux': 'Vx Velocity, km/s, GSE'})
+            df_prop = ballistic_propagation(
+                pd.Series({'X_GSE': x_sat}), df_ren, target_x_km=x_ref_km)
+            prop_sats[sat] = df_prop.rename(
+                columns={'Vx Velocity, km/s, GSE': 'Ux'})
+
+    df_combined = read_l1_data(os.path.join(filt_dir, 'L1_combined.dat'))
+    df_32re     = read_l1_data(os.path.join(filt_dir, 'IMF_32Re.dat'))
+
+    # ---- Build figure ----
+    fig = plt.figure(figsize=(10, 11))
+    gs  = fig.add_gridspec(4, 1, height_ratios=[1, 2, 2, 2], hspace=0.38)
+    ax_pos    = fig.add_subplot(gs[0])
+    ax_native = fig.add_subplot(gs[1])
+    ax_xref   = fig.add_subplot(gs[2], sharex=ax_native)
+    ax_bound  = fig.add_subplot(gs[3], sharex=ax_native)
+
+    # ── Panel 0: position schematic ───────────────────────────────────────
+    sat_order = [s for s in ('ace', 'dscovr', 'wind') if s in available]
+    y_levels  = {s: i for i, s in enumerate(sat_order)}
+    y_max     = len(sat_order)
+
+    for sat in sat_order:
+        color, label = COL_MAP[sat]
+        x_re = sat_x_re[sat]
+        y    = y_levels[sat]
+        ax_pos.scatter(x_re, y, color=color, zorder=5, s=70)
+        ax_pos.text(x_re, y + 0.18, f'{label}  {x_re:.0f} Rₑ',
+                    ha='center', va='bottom', fontsize=7.5, color=color)
+        if x_re > x_ref_re + 0.3:
+            ax_pos.annotate(
+                '',
+                xy=(x_ref_re, y), xytext=(x_re, y),
+                arrowprops=dict(arrowstyle='->', color='black', lw=1.0,
+                                linestyle='dashed', mutation_scale=10),
+            )
+        ax_pos.scatter(x_ref_re, y, color=color, zorder=6, s=70,
+                       edgecolors='black', linewidths=0.8)
+
+    ax_pos.axvline(x_ref_re, color='black', ls='--', lw=1.0, alpha=0.5)
+    ax_pos.text(x_ref_re, y_max - 0.15,
+                f'x_ref  {x_ref_re:.0f} Rₑ  ({ref_sat.upper()})',
+                ha='center', va='top', fontsize=8, fontweight='bold')
+    ax_pos.annotate(
+        '→ 14 / 32 Rₑ\n(not to scale)',
+        xy=(1.0, 0.5), xycoords='axes fraction',
+        xytext=(0.91, 0.5), textcoords='axes fraction',
+        fontsize=7.5, ha='left', va='center',
+        arrowprops=dict(arrowstyle='->', color='gray', lw=1.0),
+    )
+    x_lo = min(available.values()) / 6371.0 - 8
+    x_hi = max(available.values()) / 6371.0 + 8
+    ax_pos.set_xlim(x_hi, x_lo)
+    ax_pos.set_ylim(-0.5, y_max + 0.1)
+    ax_pos.set_yticks([])
+    ax_pos.set_xlabel('X  (Rₑ, GSM  —  larger = farther from Earth)', fontsize=8)
+    ax_pos.set_title('Satellite positions and propagation to common reference X',
+                     fontsize=9)
+    ax_pos.grid(True, axis='x', lw=0.3, alpha=0.5)
+
+    # ── Panel 1: Vx at native positions ───────────────────────────────────
+    native_handles = []
+    for sat in ('ace', 'dscovr', 'wind'):
+        color, label = COL_MAP[sat]
+        if sat in filt_sats and 'Ux' in filt_sats[sat]:
+            ax_native.plot(filt_sats[sat].index, filt_sats[sat]['Ux'],
+                           color=color, lw=0.9)
+            native_handles.append(
+                Line2D([0], [0], color=color, lw=1.1, label=label))
+    ax_native.set_ylabel('Vx  (km/s)', fontsize=8)
+    ax_native.set_title(
+        f'① Native positions — each satellite at its own X', fontsize=9)
+    ax_native.axhline(0, lw=0.5, color='gray', ls='--', alpha=0.5)
+    ax_native.grid(True, lw=0.3, alpha=0.5)
+    ax_native.legend(handles=native_handles, fontsize=7, loc='upper right',
+                     framealpha=0.7, ncol=3, handlelength=1.2)
+    ax_native.tick_params(axis='both', labelsize=7)
+    plt.setp(ax_native.get_xticklabels(), visible=False)
+
+    # ── Panel 2: Vx propagated to x_ref + combined ────────────────────────
+    xref_handles = []
+    for sat in ('ace', 'dscovr', 'wind'):
+        color, label = COL_MAP[sat]
+        if sat in prop_sats and 'Ux' in prop_sats[sat]:
+            ax_xref.plot(prop_sats[sat].index, prop_sats[sat]['Ux'],
+                         color=color, lw=0.9)
+            xref_handles.append(
+                Line2D([0], [0], color=color, lw=1.1, label=label))
+    ax_xref.set_ylabel('Vx  (km/s)', fontsize=8)
+    ax_xref.set_title(
+        f'② Propagated to x_ref ({x_ref_re:.0f} Rₑ) — aligned',
+        fontsize=9)
+    ax_xref.axhline(0, lw=0.5, color='gray', ls='--', alpha=0.5)
+    ax_xref.grid(True, lw=0.3, alpha=0.5)
+    ax_xref.legend(handles=xref_handles, fontsize=7, loc='upper right',
+                   framealpha=0.7, ncol=4, handlelength=1.2)
+    ax_xref.tick_params(axis='both', labelsize=7)
+    plt.setp(ax_xref.get_xticklabels(), visible=False)
+
+    # ── Panel 3: combined at x_ref vs 32 Re ───────────────────────────────
+    bound_handles = []
+    if not df_combined.empty and 'Ux' in df_combined:
+        ax_bound.plot(df_combined.index, df_combined['Ux'],
+                      color='black', lw=1.2)
+        bound_handles.append(
+            Line2D([0], [0], color='black', lw=1.2,
+                   label=f'Combined @ x_ref  ({x_ref_re:.0f} Rₑ)'))
+    if not df_32re.empty and 'Ux' in df_32re:
+        ax_bound.plot(df_32re.index, df_32re['Ux'],
+                      color='#7b2d8b', lw=1.2)
+        bound_handles.append(
+            Line2D([0], [0], color='#7b2d8b', lw=1.2,
+                   label='Combined @ 32 Rₑ'))
+    ax_bound.set_ylabel('Vx  (km/s)', fontsize=8)
+    ax_bound.set_title('③ Final propagation to 32 Rₑ boundary', fontsize=9)
+    ax_bound.axhline(0, lw=0.5, color='gray', ls='--', alpha=0.5)
+    ax_bound.grid(True, lw=0.3, alpha=0.5)
+    ax_bound.legend(handles=bound_handles, fontsize=7, loc='upper right',
+                    framealpha=0.7, ncol=2, handlelength=1.2)
+    fmt_xaxis(ax_bound)
+    ax_bound.set_xlabel('UT  (hr)', fontsize=8)
+    ax_bound.tick_params(axis='both', labelsize=7)
+
+    for ax in (ax_native, ax_xref, ax_bound):
+        ax.set_ylim(top=-200)
+
+    fig.suptitle(f'Propagation Diagram  —  {day_str}',
+                 fontsize=12, fontweight='bold')
+
+    os.makedirs(output_dir, exist_ok=True)
+    out_path = os.path.join(output_dir,
+                            f"{day_str.replace('-', '_')}_propagation.png")
+    fig.savefig(out_path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    print(f'Saved {out_path}')
+
+
+# ---------------------------------------------------------------------------
 # Per-day plot
 # ---------------------------------------------------------------------------
 
@@ -265,3 +469,4 @@ if __name__ == '__main__':
     days = pd.date_range(start='2024-05-01', end='2024-05-31').strftime('%Y-%m-%d').tolist()
     for day in days:
         plot_day(day)
+        plot_propagation_diagram(day)
