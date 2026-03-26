@@ -3,7 +3,9 @@ l1_filters.py
 -------------
 Signal-quality filters applied to the combined L1 time series.
 
-Public entry point: despike()  — applies a centered 3-point median to B and plasma.
+Public entry points:
+  - despike()              — centered 3-point median on B and plasma.
+  - smooth_transitions()   — boxcar smoothing at large source-change steps (plasma only).
 
 Shared utilities:
   - INTERP_LIMITS        — per-variable max-gap limits for interpolation.
@@ -62,6 +64,101 @@ def median_filter_3(a, min_periods=2):
         return a.copy()
     return pd.Series(a).rolling(
         window=3, center=True, min_periods=min_periods).median().to_numpy()
+
+
+# ---------------------------------------------------------------------------
+# Transition smoothing
+# ---------------------------------------------------------------------------
+
+# Plasma columns and how their jump magnitude C is computed.
+#   'pct' : C = 100 * (max(|M1|, |M2|) / min(|M1|, |M2|) - 1)  [%]
+#   'abs' : C = |M2 - M1|                                        [km/s]
+_TRANSITION_COLS = {
+    'Ux': 'pct',  # treat as positive magnitude
+    'Uy': 'abs',
+    'Uz': 'abs',
+    'rho': 'pct',
+    'T': 'pct',
+}
+_CMAX_DEFAULT = 20.0   # threshold below which no smoothing is applied
+_WMAX_DEFAULT = 60     # maximum smoothing window [min]
+_RATE_DEFAULT = 5.0    # W = C / rate, clipped to WMAX
+
+
+def _jump_magnitude(m1, m2, col_type):
+    """Return jump magnitude C given consecutive values and column type."""
+    if col_type == 'pct':
+        a, b = abs(m1), abs(m2)
+        if min(a, b) == 0:
+            return 0.0
+        return 100.0 * (max(a, b) / min(a, b) - 1.0)
+    return abs(m2 - m1)  # 'abs'
+
+
+def smooth_transitions(df, cmax=_CMAX_DEFAULT, wmax=_WMAX_DEFAULT,
+                       rate=_RATE_DEFAULT):
+    """Smooth large step changes in plasma output using boxcar averaging.
+
+    For each plasma column finds minute-to-minute jumps where the magnitude
+    C exceeds *cmax*.  Replaces the values in a window of width W around the
+    step with a rolling mean of the same width computed from the *original*
+    (pre-smoothing) values.  This turns a hard step into a gradual ramp.
+
+        W = nint(min(wmax, C / rate))   [minutes]
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Combined L1 data (must be on a 1-minute grid, no NaN gaps).
+    cmax : float
+        Minimum jump magnitude to trigger smoothing.
+        Units: % for rho, T, |Ux|; km/s for Uy, Uz.
+    wmax : int
+        Maximum smoothing window in minutes.
+    rate : float
+        Rate parameter: W = C / rate.
+
+    Returns
+    -------
+    pd.DataFrame
+        Copy of *df* with large plasma transitions smoothed.
+    """
+    out = df.copy()
+
+    for col, col_type in _TRANSITION_COLS.items():
+        if col not in out.columns:
+            continue
+
+        original = out[col].values.astype(float)
+        smoothed = original.copy()
+        n = len(original)
+
+        for i in range(1, n):
+            m1, m2 = original[i - 1], original[i]
+            if not (np.isfinite(m1) and np.isfinite(m2)):
+                continue
+            c = _jump_magnitude(m1, m2, col_type)
+            if c <= cmax:
+                continue
+
+            w = max(2, int(np.round(min(wmax, c / rate))))
+            half = w // 2
+            lo = max(0, i - half)
+            hi = min(n, i + half + 1)
+
+            # Replace each point in [lo, hi) with the rolling mean of width w
+            # taken from the original array (not the already-smoothed values).
+            for j in range(lo, hi):
+                win_lo = max(0, j - half)
+                win_hi = min(n, j + half + 1)
+                chunk = original[win_lo:win_hi]
+                valid = chunk[np.isfinite(chunk)]
+                if valid.size > 0:
+                    smoothed[j] = valid.mean()
+
+        out[col] = smoothed
+
+    return out
 
 
 def despike(df):

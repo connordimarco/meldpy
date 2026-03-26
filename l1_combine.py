@@ -22,7 +22,7 @@ import numpy as np
 import pandas as pd
 
 from l1_combine_T import combine_temperature
-from l1_filters import despike
+from l1_filters import despike, smooth_transitions
 from l1_propagation import ballistic_propagation
 from l1_quality import score_all_plasma
 from l1_readers import read_l1_data
@@ -81,11 +81,18 @@ def _select_column_with_continuity(col, sat_series, bad_masks=None):
         Per-satellite, per-variable boolean masks from the quality scorer.
         ``bad_masks[sat_code][var]`` is True where that satellite is bad.
     """
+    # Minimum consecutive minutes the alternative satellite must be closer
+    # before the fallback source switches.  Prevents single-minute noise
+    # from triggering a source change in the 2-sat no-agreement path.
+    _SWITCH_MIN = 3
+
     index = sat_series['ace'].index
     out_vals = np.full(len(index), np.nan, dtype=float)
     out_nsat = np.zeros(len(index), dtype=int)
 
     prev_value = np.nan
+    locked_source = None   # satellite code currently committed in fallback path
+    switch_count = 0       # consecutive minutes the preferred candidate != locked
 
     for i, _ in enumerate(index):
         values = {
@@ -136,8 +143,23 @@ def _select_column_with_continuity(col, sat_series, bad_masks=None):
             prev_value = out_vals[i]
             continue
 
+        # Fallback: no agreeing pair.  Use hysteresis to prevent oscillation
+        # when two satellites alternate which is slightly closer to prev_value.
         candidate = _fallback_source(values, available, prev_value)
-        out_vals[i] = values[candidate]
+
+        if locked_source is None or locked_source not in available:
+            # Cold-start or locked satellite disappeared — accept immediately.
+            locked_source = candidate
+            switch_count = 0
+        elif candidate == locked_source:
+            switch_count = 0
+        else:
+            switch_count += 1
+            if switch_count >= _SWITCH_MIN:
+                locked_source = candidate
+                switch_count = 0
+
+        out_vals[i] = values[locked_source]
         prev_value = out_vals[i]
 
     return pd.Series(out_vals, index=index), pd.Series(out_nsat, index=index)
@@ -253,6 +275,11 @@ def create_combined_l1_files(day, prev_day=None, next_day=None,
 
     # Combine T separately: median of available satellites + 3-point median smooth.
     df_combined['T'] = combine_temperature(data_map, master_grid)
+
+    # Smooth large step changes at source transitions (plasma only).
+    # Applied on the full context window so the smoothing window has data
+    # on both sides of transitions near midnight.
+    df_combined = smooth_transitions(df_combined)
 
     # ---- Slice out only *today* for file output ----
     today_start = pd.Timestamp(day)
