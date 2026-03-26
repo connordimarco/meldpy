@@ -92,7 +92,21 @@ def _jump_magnitude(m1, m2, col_type):
         if min(a, b) == 0:
             return 0.0
         return 100.0 * (max(a, b) / min(a, b) - 1.0)
-    return abs(m2 - m1)  # 'abs'
+    return abs(m2 - m1)
+
+
+def _apply_boxcar(smoothed, original, i, w):
+    """Write a centered rolling mean of width *w* into *smoothed* around index *i*."""
+    n = len(original)
+    half = w // 2
+    lo = max(0, i - half)
+    hi = min(n, i + half + 1)
+    ext_lo = max(0, lo - half)
+    ext_hi = min(n, hi + half)
+    rolled = (pd.Series(original[ext_lo:ext_hi])
+              .rolling(w, center=True, min_periods=1)
+              .mean().values)
+    smoothed[lo:hi] = rolled[(lo - ext_lo):(lo - ext_lo) + (hi - lo)]
 
 
 def smooth_transitions(df, cmax=_CMAX_DEFAULT, wmax=_WMAX_DEFAULT,
@@ -131,30 +145,16 @@ def smooth_transitions(df, cmax=_CMAX_DEFAULT, wmax=_WMAX_DEFAULT,
 
         original = out[col].values.astype(float)
         smoothed = original.copy()
-        n = len(original)
 
-        for i in range(1, n):
+        for i in range(1, len(original)):
             m1, m2 = original[i - 1], original[i]
             if not (np.isfinite(m1) and np.isfinite(m2)):
                 continue
             c = _jump_magnitude(m1, m2, col_type)
             if c <= cmax:
                 continue
-
             w = max(2, int(np.round(min(wmax, c / rate))))
-            half = w // 2
-            lo = max(0, i - half)
-            hi = min(n, i + half + 1)
-
-            # Replace each point in [lo, hi) with the rolling mean of width w
-            # taken from the original array (not the already-smoothed values).
-            for j in range(lo, hi):
-                win_lo = max(0, j - half)
-                win_hi = min(n, j + half + 1)
-                chunk = original[win_lo:win_hi]
-                valid = chunk[np.isfinite(chunk)]
-                if valid.size > 0:
-                    smoothed[j] = valid.mean()
+            _apply_boxcar(smoothed, original, i, w)
 
         out[col] = smoothed
 
