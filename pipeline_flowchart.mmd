@@ -32,7 +32,7 @@ flowchart TD
             Q5["⑤ Near-zero Uy/Uz  —  DSCOVR only\nFaraday-cup transverse-velocity artifact\n|Uy| or |Uz| ≤ 0.5 km/s while non-NaN"]
         end
 
-        VS["Per-variable satellite selection  ·  Bx  By  Bz  ·  Ux  Uy  Uz  ·  rho\nPlasma: quality bad-masks applied before selection\nMagnetic field: bypasses quality gate\n3 satellites agree within threshold  →  median of all three\n2 satellites agree within threshold  →  mean of closest agreeing pair\nNone agree  →  satellite closest to previous output value\n  WIND preferred at startup when no prior value exists"]
+        VS["Per-variable satellite selection  ·  Bx  By  Bz  ·  Ux  Uy  Uz  ·  rho\nPlasma: quality bad-masks applied before selection\nMagnetic field: bypasses quality gate\n3 satellites agree within threshold  →  median of all three\n2 satellites agree within threshold  →  mean of closest agreeing pair\nNone agree  →  fallback: closest to previous output  WIND at startup\n  locked source switches only after 3 consecutive minutes of preference"]
 
         DS2["despike()  ·  l1_filters.py\n3-point centered median on combined B + plasma stream"]
 
@@ -46,14 +46,16 @@ flowchart TD
         end
 
         %% ── Merge ────────────────────────────────────────────────────────────
+        ST["smooth_transitions()  ·  l1_filters.py\nboxcar smoothing at large source-change steps  plasma only\nC > 20  %  for rho  T  Ux    km/s  for Uy  Uz\nW = round  min  60  C÷5   minutes"]
         SL["Slice combined window to target day\nfill residual NaN gaps  linear interpolation  ≤ 30 min"]
 
         LD  --> QC
         QC  --> T1
         Q1 & Q2 & Q3 & Q4 & Q5 --> VS
         VS  --> DS2
-        DS2 --> SL
-        T4  --> SL
+        DS2 --> ST
+        T4  --> ST
+        ST  --> SL
     end
 
     L1C[/"L1/YYYY/MM/DD/  ·  L1_combined.dat\nnSat  —  number of quality-passing satellites contributing Ux each minute"/]

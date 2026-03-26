@@ -36,7 +36,7 @@ flowchart TD
             Q5["⑤ Near-zero Uy/Uz  —  DSCOVR only\nFaraday-cup transverse-velocity artifact\n|Uy| or |Uz| ≤ 0.5 km/s while non-NaN"]
         end
 
-        VS["Per-variable satellite selection  ·  Bx  By  Bz  ·  Ux  Uy  Uz  ·  rho\nPlasma: quality bad-masks applied before selection\nMagnetic field: bypasses quality gate\n3 satellites agree within threshold  →  median of all three\n2 satellites agree within threshold  →  mean of closest agreeing pair\nNone agree  →  satellite closest to previous output value\n  WIND preferred at startup when no prior value exists"]
+        VS["Per-variable satellite selection  ·  Bx  By  Bz  ·  Ux  Uy  Uz  ·  rho\nPlasma: quality bad-masks applied before selection\nMagnetic field: bypasses quality gate\n3 satellites agree within threshold  →  median of all three\n2 satellites agree within threshold  →  mean of closest agreeing pair\nNone agree  →  fallback: closest to previous output  WIND at startup\n  locked source switches only after 3 consecutive minutes of preference"]
         DS2["despike()  ·  l1_filters.py\n3-point centered median on combined B + plasma stream"]
 
         subgraph TC["combine_temperature()  ·  l1_combine_T.py\nT handled independently of B and plasma"]
@@ -47,14 +47,16 @@ flowchart TD
             T1 --> T2 --> T3 --> T4
         end
 
+        ST["smooth_transitions()  ·  l1_filters.py\nboxcar smoothing at large source-change steps  plasma only\nC > 20  %  for rho  T  Ux    km/s  for Uy  Uz\nW = round  min  60  C÷5   minutes"]
         SL["Slice combined window to target day\nfill residual NaN gaps  linear interpolation  ≤ 30 min"]
 
         LD  --> QC
         QC  --> T1
         Q1 & Q2 & Q3 & Q4 & Q5 --> VS
         VS  --> DS2
-        DS2 --> SL
-        T4  --> SL
+        DS2 --> ST
+        T4  --> ST
+        ST  --> SL
     end
 
     L1C[/"L1/YYYY/MM/DD/  ·  L1_combined.dat\nnSat  —  number of quality-passing satellites contributing Ux each minute"/]
@@ -82,12 +84,12 @@ flowchart TD
 | `l1_combine.py` | Multi-satellite merge with quality gating, source selection, and propagation |
 | `l1_combine_T.py` | Temperature-specific combiner (see below) |
 | `l1_quality.py` | Quality checks and `score_all_plasma()` |
-| `l1_filters.py` | `median_filter_3()`, `despike()`, `interpolate_with_limits()` |
+| `l1_filters.py` | `despike()`, `smooth_transitions()`, `median_filter_3()`, `interpolate_with_limits()` |
 | `l1_propagation.py` | Ballistic travel-time propagation with causality enforcement |
 | `l1_readers.py` | CDF and gzipped NetCDF readers; ASCII `.dat` reader |
 | `l1_downloaders.py` | CDAWeb and NOAA NGDC download helpers |
 | `l1_coordinates.py` | GSE → GSM rotation via SpacePy |
-| `plot_l1_may2024.py` | Diagnostic 4-column multi-panel plots (raw, filtered, combined, propagated overlay) |
+| `plot_l1_may2024.py` | Diagnostic 5-column multi-panel plots (raw, filtered, combined, 14 Re, 32 Re) |
 | `l1_example.py` | End-to-end driver script for date ranges (`# %%` cells, VS Code interactive) |
 | `pipeline_flowchart.mmd` | Mermaid source for the data-flow diagram above |
 
@@ -165,7 +167,17 @@ After quality gating, each variable is merged minute-by-minute with an agreement
 
 - If all 3 satellites agree → median.
 - If any 2 satellites agree → mean of that agreeing pair.
-- If none agree → satellite closest to the previous output value (WIND preferred at startup).
+- If none agree → fallback: satellite closest to the previous output value (WIND preferred at startup). A **hysteresis guard** prevents oscillation: the locked source only switches after the alternative has been consistently preferred for 3 consecutive minutes.
+
+---
+
+## Transition Smoothing (`l1_filters.smooth_transitions()`)
+
+Applied after combining B, plasma, and T but before writing output. Detects large minute-to-minute steps in each plasma column and replaces the surrounding window with a boxcar mean computed from the original values, turning a hard step into a gradual ramp.
+
+- **Trigger**: jump magnitude C exceeds `Cmax = 20` (% for `rho`, `T`, `|Ux|`; km/s for `Uy`, `Uz`)
+- **Window width**: `W = round(min(Wmax, C / R))` minutes, with `Wmax = 60`, `R = 5`
+- Applied on the full multi-day context window so transitions near midnight have data on both sides.
 
 ---
 
@@ -183,18 +195,21 @@ Four steps:
 
 ## Plotting
 
-`plot_l1_may2024.py` generates 4-column diagnostic figures:
+`plot_l1_may2024.py` generates 5-column diagnostic figures:
 
 1. Raw satellites (`L1_raw`)
 2. Filtered satellites (`L1`)
 3. Combined (`L1_combined.dat`)
-4. Combined (black) + propagated overlays (`IMF_14Re.dat` red dotted, `IMF_32Re.dat` blue dotted)
+4. Combined (black) + 14 Re propagated (red dotted)
+5. Combined (black) + 32 Re propagated (blue dotted)
 
 ---
 
 ## Tunable Parameters
 
 - Quality thresholds: module-level constants in `l1_quality.py`
-- Continuity-switch thresholds: `_switch_threshold()` in `l1_combine.py`
+- Agreement thresholds (when satellites "agree"): `_switch_threshold()` in `l1_combine.py`
+- Fallback hysteresis: `_SWITCH_MIN = 3` in `_select_column_with_continuity()` in `l1_combine.py`
+- Transition smoothing: `_CMAX_DEFAULT`, `_WMAX_DEFAULT`, `_RATE_DEFAULT` in `l1_filters.py`
 - Filter behavior: `despike()` in `l1_filters.py`
 - Temperature combiner: `combine_temperature()` in `l1_combine_T.py`
