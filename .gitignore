@@ -15,9 +15,13 @@ diagnose_jumps.py
 
 # Claude Code 
 .claude/
+CLAUDE.md
 
 # Python
 __pycache__/
 *.pyc
 .DS_Store
 .vscode/
+
+# Omni Comparison 
+omni_comparison/
