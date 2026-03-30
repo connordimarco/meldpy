@@ -4,6 +4,26 @@ Downloads, quality-screens, and combines 1-minute solar wind from **ACE**, **DSC
 
 ---
 
+## Usage
+
+```python
+from l1_pipeline import get_one_day_swmf_input, create_position_file
+from l1_combine import create_combined_l1_files
+from l1_downloaders import CDAWeb
+
+cda = CDAWeb()
+for day in ('2024-05-09', '2024-05-10', '2024-05-11'):
+    get_one_day_swmf_input(day, cda)
+    create_position_file(day, cda)
+
+create_combined_l1_files('2024-05-10', prev_day='2024-05-09', next_day='2024-05-11')
+# Outputs: L1/2024/05/10/IMF_14Re.dat, IMF_32Re.dat  (2024-05-10 only)
+```
+
+`prev_day`/`next_day` are required for correct results: Stage 1 processes days in isolation and cannot bridge gaps that straddle midnight. The combine step needs the adjacent days already downloaded.
+
+---
+
 ## Data Flow
 
 ```mermaid
@@ -90,9 +110,6 @@ flowchart TD
 | `l1_propagation.py` | Ballistic travel-time propagation with causality enforcement |
 | `l1_readers.py` | CDF and gzipped NetCDF readers; ASCII `.dat` reader |
 | `l1_downloaders.py` | CDAWeb and NOAA NGDC download helpers |
-| `plot_l1_may2024.py` | Diagnostic plots: 5-column per-variable figure (`plot_day`) and propagation-step diagram (`plot_propagation_diagram`) |
-| `l1_example.py` | End-to-end driver script for date ranges (`# %%` cells, VS Code interactive) |
-| `pipeline_flowchart.mmd` | Mermaid source for the data-flow diagram above |
 
 ---
 
@@ -142,86 +159,9 @@ DSCOVR plasma is taken from NOAA NGDC because the CDAWeb Faraday cup plasma prod
 
 ---
 
-## Filtering
+## Methodology
 
-Per-satellite filtering in `despike()` applies a centered **3-point median filter** to `Bx, By, Bz, Ux, Uy, Uz, rho` (not T).
-
-Filtered streams are written to `L1/...`; untouched streams are preserved in `L1_raw/...`.
-
----
-
-## Quality Checks (`l1_quality.py`)
-
-Applied to **plasma variables only (not B, not T)**. Each satellite/variable/minute receives a boolean bad-mask; flagged values are excluded from the combine step.
-
-1. **Outlier detection**: if two satellites agree and one disagrees, the outlier is flagged.
-2. **Physical range**: removes implausible values.
-3. **NaN-fraction**: marks windows with poor data completeness.
-4. **Flat-plateau**: catches stuck/near-constant instrument readings.
-5. **Near-zero Uy/Uz (DSCOVR only)**: catches a known DSCOVR transverse-velocity artifact.
-
----
-
-## Propagate-to-Reference (`l1_combine.py`)
-
-Before combining, the pipeline aligns all satellites to a common reference position so that the merge compares measurements of the same solar-wind parcel rather than simultaneous but spatially-separated snapshots.
-
-1. Read noon GSM X positions for all three satellites from `L1_satpos.dat`.
-2. Identify the satellite closest to Earth (smallest X).
-3. Ballistically propagate each farther satellite's time series forward to that reference X using `ballistic_propagation()` — the same algorithm used for the final propagation to Earth.
-4. All subsequent steps (quality scoring, satellite selection, temperature combine) operate on the time-aligned data.
-5. The final propagation to 14/32 Re uses this reference X as the source position.
-
----
-
-## Source Selection (`l1_combine.py`)
-
-After quality gating, each variable is merged minute-by-minute with an agreement-first rule:
-
-- If all 3 satellites agree → median.
-- If any 2 satellites agree → mean of that agreeing pair.
-- If none agree → fallback: satellite closest to the previous output value (WIND preferred at startup). A **hysteresis guard** prevents oscillation: the locked source only switches after the alternative has been consistently preferred for 3 consecutive minutes.
-
----
-
-## Transition Smoothing (`l1_filters.smooth_transitions()`)
-
-Applied after combining B, plasma, and T but before writing output. At minutes where the contributing satellite set changes, detects large steps and replaces the surrounding window with a boxcar mean computed from the original values, turning a hard source-switch artifact into a gradual ramp. Real solar-wind discontinuities that do not coincide with a source switch are left untouched.
-
-- **Trigger**: satellite source changed AND jump magnitude C exceeds `Cmax = 20` (% for `rho`, `T`, `|Ux|`; km/s for `Uy`, `Uz`)
-- **Window width**: `W = round(min(Wmax, C / R))` minutes, with `Wmax = 60`, `R = 5`
-- Applied on the full multi-day context window so transitions near midnight have data on both sides.
-
----
-
-## Temperature (`l1_combine_T.py`)
-
-T is handled separately because it spans orders of magnitude, and real propagation delays between spacecraft are indistinguishable from sensor disagreement. Quality gating on T consistently over-flags during solar wind transitions.
-
-Four steps:
-1. **Per-satellite 3-point median** to remove single-minute spikes.
-2. **Per-satellite spikiness filter**: rolling log-std over an 11-minute window; minutes exceeding the threshold are excluded (catches DSCOVR oscillation episodes).
-3. **Geometric median**: `exp(median(log(T)))` across available satellites. Works correctly at any spread — no threshold, no source-switching. With 2 satellites this is the geometric mean; with 3 it returns the log-space middle value.
-4. **3-point rolling median** on the combined result to remove residual minute-level noise.
-
----
-
-## Plotting
-
-`plot_l1_may2024.py` provides two diagnostic figures per day:
-
-**`plot_day(day)`** — 5-column per-variable figure saved to `plots/YYYY_MM_DD.png`:
-1. Raw satellites (`L1_raw`)
-2. Filtered satellites (`L1`)
-3. Combined (`L1_combined.dat`)
-4. Combined (black) + 14 Re propagated (red dotted)
-5. Combined (black) + 32 Re propagated (blue dotted)
-
-**`plot_propagation_diagram(day)`** — propagation step diagram saved to `plots/YYYY_MM_DD_propagation.png`:
-- Top panel: satellite X positions (Re) with arrows to x_ref
-- ① Vx at native satellite positions
-- ② Vx after propagation to x_ref (time-aligned)
-- ③ Combined at x_ref vs combined at 32 Re
+Full algorithm description in the accompanying manuscript. For tunable parameters, see below.
 
 ---
 
