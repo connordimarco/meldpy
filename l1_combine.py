@@ -22,7 +22,7 @@ import numpy as np
 import pandas as pd
 
 from l1_combine_T import combine_temperature
-from l1_filters import smooth_transitions
+from l1_filters import smooth_transitions, interpolate_with_limits, INTERP_LIMITS
 from l1_propagation import ballistic_propagation
 from l1_quality import score_all_plasma
 from l1_readers import read_l1_data
@@ -295,6 +295,14 @@ def create_combined_l1_files(day, prev_day=None, next_day=None,
     if not data_map:
         print('No satellite data found. Skipping.')
         return
+
+    # ---- Gap-fill across day boundaries using the full context window ----
+    # Stage 1 fills gaps within each day but can't bridge trailing/leading
+    # edges where the adjacent day provides the missing bracket.  Now that
+    # all three days are loaded together we re-apply the same per-variable
+    # limits so those cross-midnight gaps are filled before any merging.
+    for sat in list(data_map.keys()):
+        data_map[sat] = interpolate_with_limits(data_map[sat], INTERP_LIMITS)
 
     # ---- Build a master grid spanning the full context window ----
     window_start = pd.Timestamp(context_days[0])

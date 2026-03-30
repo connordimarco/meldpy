@@ -22,6 +22,7 @@ flowchart TD
     %% ── Multi-satellite combine ─────────────────────────────────────────────
     subgraph COMB["l1_combine.py  —  create_combined_l1_files()"]
         LD["Load per-satellite .dat files\n±1-day context window\nalign all satellites to common 1-min master grid"]
+        GF["Cross-boundary gap fill  ·  interpolate_with_limits\nper-satellite on full 3-day window\nB ≤ 5 min  ·  plasma ≤ 60 min  ·  T ≤ 60 min\nbridges trailing/leading edges Stage 1 cannot see"]
         PR["Propagate to common reference position\nread L1_satpos.dat  ·  find satellite closest to Earth  min X\nshift farther satellites forward in time  ballistic_propagation\nall satellites now represent same parcel at x_ref"]
 
         %% ── Left branch: B + plasma ─────────────────────────────────────────
@@ -48,7 +49,8 @@ flowchart TD
         ST["smooth_transitions()  ·  l1_filters.py\nboxcar smoothing only at satellite source-switch minutes  plasma only\nC > 20  %  for rho  T  Ux    km/s  for Uy  Uz\nW = round  min  60  C÷5   minutes\nreal solar-wind jumps not smoothed"]
         SL["Slice combined window to target day\nfill residual NaN gaps  linear interpolation  ≤ 30 min"]
 
-        LD  --> PR
+        LD  --> GF
+        GF  --> PR
         PR  --> QC
         PR  --> T1
         Q1 & Q2 & Q3 & Q4 & Q5 --> VS
