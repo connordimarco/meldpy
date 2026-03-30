@@ -10,8 +10,6 @@ L1_raw/
 
 # Debug Work
 scratch/
-analyze_may2024.py
-diagnose_jumps.py
 
 # Claude Code 
 .claude/

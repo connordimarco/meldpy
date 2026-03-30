@@ -21,8 +21,9 @@ from datetime import datetime
 
 import numpy as np
 import pandas as pd
+import spacepy.coordinates as sc
+from spacepy.time import Ticktock
 
-from l1_coordinates import gse_to_gsm
 from l1_downloaders import (
     download_cdaweb_files,
     download_dscovr_ngdc,
@@ -30,6 +31,22 @@ from l1_downloaders import (
 )
 from l1_filters import despike, interpolate_with_limits, INTERP_LIMITS
 from l1_readers import cdf_to_df, nc_gz_to_df
+
+
+def gse_to_gsm(df, cols):
+    """Rotate vector columns from GSE to GSM in-place."""
+    if df.empty:
+        return df
+    vec_gse = df[cols].values
+    times = df.index.to_pydatetime()
+    t = Ticktock(times, 'UTC')
+    c_gse = sc.Coords(vec_gse, 'GSE', 'car', ticks=t)
+    c_gsm = c_gse.convert('GSM', 'car')
+    vec_gsm = c_gsm.data
+    df[cols[0]] = vec_gsm[:, 0]
+    df[cols[1]] = vec_gsm[:, 1]
+    df[cols[2]] = vec_gsm[:, 2]
+    return df
 
 
 _NGDC_F1M_VARS = {

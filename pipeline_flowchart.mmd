@@ -7,7 +7,7 @@ flowchart TD
 
         DL["Download\nl1_downloaders.py\nCDAWeb API  ·  NOAA NGDC FTP"]
         RD["Read raw files  ·  l1_readers.py\nCDF  ACE WIND  ·  gzipped NetCDF  DSCOVR"]
-        RS["Resample to 1-minute grid\nGSE→GSM coordinate rotation  l1_coordinates.py\nWIND thermal speed → temperature  K"]
+        RS["Resample to 1-minute grid\nGSE→GSM coordinate rotation  gse_to_gsm\nWIND thermal speed → temperature  K"]
         DS1["despike()  ·  l1_filters.py\n3-point centered median filter\nBx  By  Bz  ·  Ux  Uy  Uz  ·  rho\nshort intra-satellite gaps filled  ≤ 2 min"]
 
         ACE & DSC & WND --> DL --> RD --> RS --> DS1

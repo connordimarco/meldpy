@@ -348,10 +348,6 @@ def create_combined_l1_files(day, prev_day=None, next_day=None,
     # Quality-score + satellite-select over the full window (B and plasma, not T).
     df_combined, provenance, source_map = combine_data_priority(data_map, master_grid)
 
-    # Despike over the full window so filters are warmed-up at day edges.
-    # if 'rho' in df_combined.columns or 'Ux' in df_combined.columns:
-    #     df_combined = despike(df_combined)
-
     # Combine T separately: median of available satellites + 3-point median smooth.
     df_combined['T'] = combine_temperature(data_map, master_grid)
 

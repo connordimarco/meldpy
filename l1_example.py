@@ -40,14 +40,6 @@ print('Modules reloaded.')
 
 # %%
 # -----------------------------------------------------------------------
-# Date range to process.
-# Uncomment the rolling-window block to always run the last N days.
-# -----------------------------------------------------------------------
-
-# today = pd.Timestamp.utcnow().strftime('%Y-%m-%d')
-# days = pd.date_range(end=today, periods=7).strftime('%Y-%m-%d').tolist()
-
-
 days = pd.date_range(
     start='2024-05-01', end='2024-05-31'
 ).strftime('%Y-%m-%d').tolist()

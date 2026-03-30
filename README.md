@@ -14,7 +14,7 @@ flowchart TD
         WND["WIND · CDAWeb\nWI_H0_MFI  WI_H1_SWE"]
         DL["Download\nl1_downloaders.py\nCDAWeb API  ·  NOAA NGDC FTP"]
         RD["Read raw files  ·  l1_readers.py\nCDF  ACE WIND  ·  gzipped NetCDF  DSCOVR"]
-        RS["Resample to 1-minute grid\nGSE→GSM coordinate rotation  l1_coordinates.py\nWIND thermal speed → temperature  K"]
+        RS["Resample to 1-minute grid\nGSE→GSM coordinate rotation  gse_to_gsm\nWIND thermal speed → temperature  K"]
         DS1["despike()  ·  l1_filters.py\n3-point centered median filter\nBx  By  Bz  ·  Ux  Uy  Uz  ·  rho\nshort intra-satellite gaps filled  ≤ 2 min"]
         ACE & DSC & WND --> DL --> RD --> RS --> DS1
     end
@@ -90,7 +90,6 @@ flowchart TD
 | `l1_propagation.py` | Ballistic travel-time propagation with causality enforcement |
 | `l1_readers.py` | CDF and gzipped NetCDF readers; ASCII `.dat` reader |
 | `l1_downloaders.py` | CDAWeb and NOAA NGDC download helpers |
-| `l1_coordinates.py` | GSE → GSM rotation via SpacePy |
 | `plot_l1_may2024.py` | Diagnostic plots: 5-column per-variable figure (`plot_day`) and propagation-step diagram (`plot_propagation_diagram`) |
 | `l1_example.py` | End-to-end driver script for date ranges (`# %%` cells, VS Code interactive) |
 | `pipeline_flowchart.mmd` | Mermaid source for the data-flow diagram above |
