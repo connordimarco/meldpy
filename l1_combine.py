@@ -406,6 +406,10 @@ def create_combined_l1_files(day, prev_day=None, next_day=None,
     df_prop_input = df_prop_input.rename(
         columns={'Ux': 'Vx Velocity, km/s, GSE'})
 
+    if df_today['Ux'].isna().all():
+        print('  No valid Ux — skipping propagation (no satellite data for this day).')
+        return
+
     # Write one propagated product per requested boundary.
     for b_re in boundaries_re:
         target_km = b_re * 6371.0

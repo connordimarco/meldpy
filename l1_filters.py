@@ -47,7 +47,7 @@ def interpolate_with_limits(df, limits=None, method='time'):
     out = df.copy()
     for col, limit in limits.items():
         if col in out.columns:
-            out[col] = out[col].interpolate(
+            out[col] = out[col].infer_objects(copy=False).interpolate(
                 method=method,
                 limit=limit,
                 limit_area='inside',
