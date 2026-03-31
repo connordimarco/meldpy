@@ -7,7 +7,7 @@ Downloads, quality-screens, and combines 1-minute solar wind from **ACE**, **DSC
 ## Installation
 
 ```bash
-pip install git+https://github.com/connordimarco/SWMF-IMF.git
+pip install git+https://github.com/connordimarco/meldpy.git
 ```
 
 ## Usage
