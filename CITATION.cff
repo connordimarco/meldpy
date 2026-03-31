@@ -1,6 +1,6 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
-title: "meldpy: Multi-satellite solar wind merging pipeline"
+title: "meldpy: Michigan Ensemble L1 Dataset Python Library"
 version: 0.1.0
 repository-code: "https://github.com/connordimarco/meldpy"
 license: MIT
