@@ -1,4 +1,4 @@
-# L1 Solar Wind Pipeline
+# Michigan Ensemble L1 Dataset
 
 Downloads, quality-screens, and combines 1-minute solar wind from **ACE**, **DSCOVR**, and **WIND** into merged time series.
 
