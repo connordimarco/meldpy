@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "meldpy"
 version = "0.1.0"
-description = "Multi-satellite solar wind merging pipeline for SWMF/BATS-R-US boundary conditions"
+description = "Michigan Ensemble L1 Dataset Python Library"
 requires-python = ">=3.9"
 dependencies = [
     "numpy>=1.24",
