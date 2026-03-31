@@ -1,0 +1,15 @@
+Metadata-Version: 2.4
+Name: meldpy
+Version: 0.1.0
+Summary: Multi-satellite solar wind merging pipeline for SWMF/BATS-R-US boundary conditions
+Requires-Python: >=3.9
+License-File: LICENSE
+Requires-Dist: numpy>=1.24
+Requires-Dist: pandas>=2.0
+Requires-Dist: matplotlib>=3.7
+Requires-Dist: requests>=2.28
+Requires-Dist: cdflib>=1.0
+Requires-Dist: netCDF4>=1.6
+Requires-Dist: spacepy>=0.5
+Requires-Dist: pyspedas>=1.5
+Dynamic: license-file
