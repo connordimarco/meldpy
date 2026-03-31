@@ -24,7 +24,7 @@ Strategy (three steps):
 import numpy as np
 import pandas as pd
 
-from l1_filters import median_filter_3
+from .l1_filters import median_filter_3
 
 # Rolling log-std threshold above which a satellite's T is considered too noisy
 # to contribute to the combination. Evaluated over an 11-minute window.

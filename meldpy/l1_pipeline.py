@@ -3,17 +3,18 @@ l1_pipeline.py
 --------------
 Per-satellite download, processing, and L1 file creation.
 
-Each call to get_one_day_swmf_input() processes one UTC day for all three
-satellites:
-  - Downloads raw CDF/NC data from CDAWeb (ACE, WIND) and NOAA NGDC (DSCOVR).
-  - Resamples to a 1-minute master grid.
-  - Rotates coordinate frames to GSM where needed.
-  - Converts WIND thermal speed to temperature in Kelvin.
-  - Writes per-satellite L1_*.dat files.
+Two-phase design:
+  Phase 1 (download): download raw CDF/NC data, resample to 1-min, rotate
+      to GSM, convert units, and write per-satellite files to L1_raw/.
+      Skipped if L1_raw already contains data for the day.
+  Phase 2 (process): read L1_raw, despike, interpolate, and write filtered
+      per-satellite files to L1/.  Re-runnable without re-downloading.
 
 Public entry points:
-  get_one_day_swmf_input(day, cda)  — download + process all satellites.
-  create_position_file(day, cda)    — write L1_satpos.dat (noon positions).
+  download_day(day, cda)            -- Phase 1: download + write L1_raw.
+  process_day(day)                  -- Phase 2: L1_raw -> filtered L1/.
+  get_one_day_swmf_input(day, cda)  -- Legacy wrapper (Phase 1 + 2).
+  create_position_file(day, cda)    -- Write L1_satpos.dat (noon positions).
 """
 import glob
 import os
@@ -24,13 +25,13 @@ import pandas as pd
 import spacepy.coordinates as sc
 from spacepy.time import Ticktock
 
-from l1_downloaders import (
+from .l1_downloaders import (
     download_cdaweb_files,
     download_dscovr_ngdc,
     download_position_cdaweb_files,
 )
-from l1_filters import despike, interpolate_with_limits, INTERP_LIMITS
-from l1_readers import cdf_to_df, nc_gz_to_df
+from .l1_filters import despike, interpolate_with_limits, INTERP_LIMITS
+from .l1_readers import cdf_to_df, nc_gz_to_df, read_l1_data
 
 
 def gse_to_gsm(df, cols):
@@ -90,18 +91,21 @@ def process_satellite(
     trange_end,
     cleanup_cdfs=True,
 ):
-    """Process one CDAWeb-sourced satellite for a single day.
+    """Download-phase processing for one CDAWeb-sourced satellite.
 
     Reads separate MAG and plasma CDF files, resamples both to 1-minute,
-    applies any required coordinate rotation and temperature conversion,
-    then writes a per-satellite L1_<sat_name>.dat file.
+    applies coordinate rotation and temperature conversion, then writes
+    a raw (pre-despike) L1_<sat_name>.dat file to L1_raw/.
+
+    Does NOT despike or write to L1/ -- that is handled by
+    process_raw_to_filtered().
 
     Parameters
     ----------
     sat_name : str  ('ace' | 'wind')
     mag_file_pattern : str  Glob prefix for the magnetometer CDF (e.g. 'ac_h0_mfi').
     plasma_file_pattern : str  Glob prefix for the plasma CDF (e.g. 'ac_h0_swe').
-    var_map : dict  Variable-name mapping (see get_one_day_swmf_input for examples).
+    var_map : dict  Variable-name mapping (see download_day for examples).
     data_dir : str  Root scratch directory where CDFs were downloaded.
     trange_start, trange_end : str  'YYYY-MM-DD' day boundaries for the output grid.
     cleanup_cdfs : bool  Remove raw CDF files after writing output (default True).
@@ -187,32 +191,22 @@ def process_satellite(
     if 'rho' in df_final.columns:
         df_final.loc[df_final['rho'].isna(), 'T'] = np.nan
 
-    dt_start = datetime.strptime(trange_start, '%Y-%m-%d')
-    # Save raw (pre-despike) satellite output for diagnostics/plotting.
-    raw_output_dir = dt_start.strftime('L1_raw/%Y/%m/%d')
-    os.makedirs(raw_output_dir, exist_ok=True)
-    raw_output_file = os.path.join(raw_output_dir, f'L1_{sat_name}.dat')
-    _write_l1_dat(
-        df_final,
-        raw_output_file,
-        f'Produced from {sat_name} CDAWeb CDFs (raw)',
-    )
-    print(f'Saved {raw_output_file}')
-
-    # Despike and fill only short gaps before writing the filtered file.
-    # Long outages stay NaN to avoid synthetic long flat/ramp segments.
-    df_filtered = despike(df_final)
-    df_filtered = interpolate_with_limits(df_filtered, INTERP_LIMITS)
-
-    output_dir = dt_start.strftime('L1/%Y/%m/%d')
-    os.makedirs(output_dir, exist_ok=True)
-    output_file = os.path.join(output_dir, f'L1_{sat_name}.dat')
-    _write_l1_dat(
-        df_filtered,
-        output_file,
-        f'Produced from {sat_name} CDAWeb CDFs (filtered)',
-    )
-    print(f'Saved {output_file}')
+    # Skip writing if the satellite had no actual data for this day.
+    check_cols = [c for c in ('Bx', 'By', 'Bz', 'Ux', 'Uy', 'Uz', 'rho')
+                  if c in df_final.columns]
+    if check_cols and df_final[check_cols].isna().all().all():
+        print(f'  {sat_name}: all data is NaN for this day, skipping L1_raw write.')
+    else:
+        dt_start = datetime.strptime(trange_start, '%Y-%m-%d')
+        raw_output_dir = dt_start.strftime('L1_raw/%Y/%m/%d')
+        os.makedirs(raw_output_dir, exist_ok=True)
+        raw_output_file = os.path.join(raw_output_dir, f'L1_{sat_name}.dat')
+        _write_l1_dat(
+            df_final,
+            raw_output_file,
+            f'Produced from {sat_name} CDAWeb CDFs (raw)',
+        )
+        print(f'Saved {raw_output_file}')
 
     # Remove raw CDFs once we have daily output files.
     if cleanup_cdfs:
@@ -225,11 +219,14 @@ def process_satellite(
 
 
 def process_satellite_ngdc(day, data_dir, trange_start, trange_end, cleanup=True):
-    """Process DSCOVR using NOAA NGDC 1-minute products.
+    """Download-phase processing for DSCOVR using NOAA NGDC 1-minute products.
 
     Downloads f1m (plasma) and m1m (magnetometer) gzipped NetCDF files,
-    resamples to 1-minute, and writes L1_dscovr.dat.
+    resamples to 1-minute, and writes raw L1_dscovr.dat to L1_raw/.
     NGDC data is already in GSM so no rotation is needed.
+
+    Does NOT despike or write to L1/ -- that is handled by
+    process_raw_to_filtered().
 
     Parameters
     ----------
@@ -244,19 +241,19 @@ def process_satellite_ngdc(day, data_dir, trange_start, trange_end, cleanup=True
     try:
         paths = download_dscovr_ngdc(day, data_dir)
     except RuntimeError as e:
-        print(f'  WARNING: DSCOVR unavailable — {e}')
+        print(f'  WARNING: DSCOVR unavailable -- {e}')
         paths = {}
 
     if 'f1m' in paths:
         df_plasma = nc_gz_to_df(paths['f1m'], 'time', _NGDC_F1M_VARS)
     else:
-        print('  Missing f1m (plasma) — DSCOVR plasma will be NaN.')
+        print('  Missing f1m (plasma) -- DSCOVR plasma will be NaN.')
         df_plasma = pd.DataFrame(columns=['Ux', 'Uy', 'Uz', 'rho', 'T'])
 
     if 'm1m' in paths:
         df_mag = nc_gz_to_df(paths['m1m'], 'time', _NGDC_M1M_VARS)
     else:
-        print('  Missing m1m (mag) — DSCOVR mag will be NaN.')
+        print('  Missing m1m (mag) -- DSCOVR mag will be NaN.')
         df_mag = pd.DataFrame(columns=['Bx', 'By', 'Bz'])
 
     # Resample to the same 1-minute master grid as other satellites.
@@ -282,32 +279,22 @@ def process_satellite_ngdc(day, data_dir, trange_start, trange_end, cleanup=True
         df_final['T'] = np.nan
     df_final.loc[df_final['T'] > 1e9, 'T'] = np.nan
 
-    dt_start = datetime.strptime(trange_start, '%Y-%m-%d')
-    # Save raw (pre-despike) DSCOVR output for diagnostics/plotting.
-    raw_output_dir = dt_start.strftime('L1_raw/%Y/%m/%d')
-    os.makedirs(raw_output_dir, exist_ok=True)
-    raw_output_file = os.path.join(raw_output_dir, 'L1_dscovr.dat')
-    _write_l1_dat(
-        df_final,
-        raw_output_file,
-        'Produced from DSCOVR NOAA NGDC NetCDF (raw)',
-    )
-    print(f'Saved {raw_output_file}')
-
-    # Despike and fill only short gaps before writing the filtered file.
-    # Long outages stay NaN to avoid synthetic long flat/ramp segments.
-    df_filtered = despike(df_final)
-    df_filtered = interpolate_with_limits(df_filtered, INTERP_LIMITS)
-
-    output_dir = dt_start.strftime('L1/%Y/%m/%d')
-    os.makedirs(output_dir, exist_ok=True)
-    output_file = os.path.join(output_dir, 'L1_dscovr.dat')
-    _write_l1_dat(
-        df_filtered,
-        output_file,
-        'Produced from DSCOVR NOAA NGDC NetCDF (filtered)',
-    )
-    print(f'Saved {output_file}')
+    # Skip writing if DSCOVR had no actual data for this day.
+    check_cols = [c for c in ('Bx', 'By', 'Bz', 'Ux', 'Uy', 'Uz', 'rho')
+                  if c in df_final.columns]
+    if check_cols and df_final[check_cols].isna().all().all():
+        print('  dscovr: all data is NaN for this day, skipping L1_raw write.')
+    else:
+        dt_start = datetime.strptime(trange_start, '%Y-%m-%d')
+        raw_output_dir = dt_start.strftime('L1_raw/%Y/%m/%d')
+        os.makedirs(raw_output_dir, exist_ok=True)
+        raw_output_file = os.path.join(raw_output_dir, 'L1_dscovr.dat')
+        _write_l1_dat(
+            df_final,
+            raw_output_file,
+            'Produced from DSCOVR NOAA NGDC NetCDF (raw)',
+        )
+        print(f'Saved {raw_output_file}')
 
     # Delete temporary NGDC downloads when requested.
     if cleanup:
@@ -319,10 +306,158 @@ def process_satellite_ngdc(day, data_dir, trange_start, trange_end, cleanup=True
                 print(f'  Could not remove {fpath}: {e}')
 
 
+def process_raw_to_filtered(sat_name, day):
+    """Phase 2: read a raw L1_raw file, despike, interpolate, write to L1/.
+
+    Skips gracefully if the L1_raw file does not exist (satellite had no
+    data for this day).
+
+    Parameters
+    ----------
+    sat_name : str  ('ace' | 'dscovr' | 'wind')
+    day : str  ('YYYY-MM-DD')
+    """
+    dt = datetime.strptime(day, '%Y-%m-%d')
+    raw_path = dt.strftime(f'L1_raw/%Y/%m/%d/L1_{sat_name}.dat')
+
+    if not os.path.exists(raw_path):
+        print(f'  No L1_raw file for {sat_name} on {day}, skipping filter step.')
+        return
+
+    df = read_l1_data(raw_path)
+    if df.empty:
+        return
+
+    # Keep only the physics columns for filtering.
+    numeric_cols = ['Bx', 'By', 'Bz', 'Ux', 'Uy', 'Uz', 'rho', 'T']
+    df = df[[c for c in numeric_cols if c in df.columns]]
+
+    df_filtered = despike(df)
+    df_filtered = interpolate_with_limits(df_filtered, INTERP_LIMITS)
+
+    output_dir = dt.strftime('L1/%Y/%m/%d')
+    os.makedirs(output_dir, exist_ok=True)
+    output_file = os.path.join(output_dir, f'L1_{sat_name}.dat')
+    _write_l1_dat(
+        df_filtered,
+        output_file,
+        f'Produced from {sat_name} L1_raw (filtered)',
+    )
+    print(f'Saved {output_file}')
+
+
+# ---------------------------------------------------------------------------
+# Top-level entry points
+# ---------------------------------------------------------------------------
+
+_SENTINEL_NAME = '.download_complete'
+
+
+def download_day(day, cda):
+    """Phase 1: download raw data for all satellites and write to L1_raw/.
+
+    Checks for a sentinel file to skip entirely on re-runs.  Per-satellite
+    checks avoid re-downloading satellites whose L1_raw file already exists.
+    Also creates the position file (requires CDF downloads).
+
+    Parameters
+    ----------
+    day : str  ('YYYY-MM-DD')
+    cda : pyspedas.CDAWeb
+    """
+    dt = datetime.strptime(day, '%Y-%m-%d')
+    raw_dir = dt.strftime('L1_raw/%Y/%m/%d')
+    sentinel = os.path.join(raw_dir, _SENTINEL_NAME)
+
+    if os.path.exists(sentinel):
+        print(f'[download_day] {day}: sentinel exists, skipping download.')
+        return
+
+    trange_start = day
+    trange_end = (pd.to_datetime(day) + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
+    data_dir = 'cdf_temp'
+
+    # Determine which satellites still need downloading.
+    need_ace = not os.path.exists(os.path.join(raw_dir, 'L1_ace.dat'))
+    need_wind = not os.path.exists(os.path.join(raw_dir, 'L1_wind.dat'))
+    need_dscovr = not os.path.exists(os.path.join(raw_dir, 'L1_dscovr.dat'))
+
+    # Download CDAWeb datasets for ACE + WIND in a single API call.
+    if need_ace or need_wind:
+        datasets = []
+        if need_ace:
+            datasets.extend(['AC_H0_MFI', 'AC_H0_SWE'])
+        if need_wind:
+            datasets.extend(['WI_H0_MFI', 'WI_H1_SWE'])
+        download_cdaweb_files(cda, datasets, trange_start, trange_end, data_dir)
+
+    ace_map = {
+        'mag_time': 'Epoch',
+        'mag_vars': {'BGSM': ['Bx', 'By', 'Bz']},
+        'plasma_time': 'Epoch',
+        'plasma_vars': {'V_GSM': ['Ux', 'Uy', 'Uz'], 'Np': ['rho'], 'Tpr': ['T']},
+    }
+    win_map = {
+        'mag_time': 'Epoch',
+        'mag_vars': {'BGSM': ['Bx', 'By', 'Bz']},
+        'plasma_time': 'Epoch',
+        'plasma_vars': {
+            'Proton_VX_moment': ['Ux'],
+            'Proton_VY_moment': ['Uy'],
+            'Proton_VZ_moment': ['Uz'],
+            'Proton_Np_moment': ['rho'],
+            'Proton_W_moment': ['v_th'],
+        },
+    }
+
+    if need_ace:
+        process_satellite('ace', 'ac_h0_mfi', 'ac_h0_swe',
+                          ace_map, data_dir, trange_start, trange_end)
+    if need_dscovr:
+        process_satellite_ngdc(day, data_dir, trange_start, trange_end)
+    if need_wind:
+        process_satellite('wind', 'wi_h0_mfi', 'wi_h1_swe',
+                          win_map, data_dir, trange_start, trange_end)
+
+    # Position file (always recreate -- cheap and needed by combine step).
+    create_position_file(day, cda)
+
+    # Write sentinel so future runs skip this day entirely.
+    os.makedirs(raw_dir, exist_ok=True)
+    with open(sentinel, 'w') as f:
+        f.write(f'Downloaded {day}\n')
+    print(f'[download_day] {day}: done.')
+
+
+def process_day(day):
+    """Phase 2: read L1_raw, despike/filter, write per-satellite files to L1/.
+
+    Re-runnable without re-downloading.  Skips satellites that have no
+    L1_raw file (no data available for that day).
+
+    Parameters
+    ----------
+    day : str  ('YYYY-MM-DD')
+    """
+    print(f'\n[process_day] Filtering L1_raw -> L1 for {day}...')
+    for sat in ('ace', 'dscovr', 'wind'):
+        process_raw_to_filtered(sat, day)
+
+
+def get_one_day_swmf_input(day, cda):
+    """Legacy wrapper: download + process all satellites for one day.
+
+    Prefer using download_day() + process_day() separately so that
+    algorithm changes can be re-run without re-downloading.
+    """
+    download_day(day, cda)
+    process_day(day)
+
+
 def create_position_file(day, cda, cleanup_cdfs=True):
     """Write L1_satpos.dat containing mean noon GSM positions for all three satellites.
 
-    Downloads a narrow 11:00–13:00 UT window of orbit data, averages the
+    Downloads a narrow 11:00-13:00 UT window of orbit data, averages the
     X/Y/Z positions, and writes a single-row file used by the propagator to
     determine ballistic travel time.
 
@@ -338,6 +473,16 @@ def create_position_file(day, cda, cleanup_cdfs=True):
     dt_day = pd.to_datetime(day)
     data_dir = 'cdf_temp'
 
+    # Bug 2 fix: purge stale position CDFs from any previous run so that
+    # glob does not pick up wrong-day files left behind by a crash.
+    for pattern in ('ac_h0_mfi_*.cdf', 'wi_h0_mfi_*.cdf',
+                    'dscovr_orbit_pre_*.cdf'):
+        for stale in glob.glob(f'{data_dir}/**/{pattern}', recursive=True):
+            try:
+                os.remove(stale)
+            except Exception:
+                pass
+
     dt_start = datetime.strptime(day, '%Y-%m-%d')
     output_dir = dt_start.strftime('L1/%Y/%m/%d')
     os.makedirs(output_dir, exist_ok=True)
@@ -352,34 +497,34 @@ def create_position_file(day, cda, cleanup_cdfs=True):
 
     # ACE position is GSM in km, so convert to Re.
     ace_files = glob.glob(f'{data_dir}/**/ac_h0_mfi_*.cdf', recursive=True)
+    ace_mean = pd.Series({'Ax': np.nan, 'Ay': np.nan, 'Az': np.nan})
     if ace_files:
         df_ace = cdf_to_df(ace_files[0], 'Epoch', {
                            'SC_pos_GSM': ['Ax', 'Ay', 'Az']})
-        df_ace[['Ax', 'Ay', 'Az']] /= 6371.0
-        ace_mean = df_ace[['Ax', 'Ay', 'Az']].mean()
-    else:
-        ace_mean = pd.Series({'Ax': np.nan, 'Ay': np.nan, 'Az': np.nan})
+        if not df_ace.empty and {'Ax', 'Ay', 'Az'}.issubset(df_ace.columns):
+            df_ace[['Ax', 'Ay', 'Az']] /= 6371.0
+            ace_mean = df_ace[['Ax', 'Ay', 'Az']].mean()
 
     # WIND position is already GSM in Re.
     wind_files = glob.glob(f'{data_dir}/**/wi_h0_mfi_*.cdf', recursive=True)
+    wind_mean = pd.Series({'Wx': np.nan, 'Wy': np.nan, 'Wz': np.nan})
     if wind_files:
         df_wind = cdf_to_df(wind_files[0], 'Epoch', {
                             'PGSM': ['Wx', 'Wy', 'Wz']})
-        wind_mean = df_wind[['Wx', 'Wy', 'Wz']].mean()
-    else:
-        wind_mean = pd.Series({'Wx': np.nan, 'Wy': np.nan, 'Wz': np.nan})
+        if not df_wind.empty and {'Wx', 'Wy', 'Wz'}.issubset(df_wind.columns):
+            wind_mean = df_wind[['Wx', 'Wy', 'Wz']].mean()
 
     # DSCOVR position comes in GSE km; convert to Re then rotate to GSM.
     dsc_files = glob.glob(
         f'{data_dir}/**/dscovr_orbit_pre_*.cdf', recursive=True)
+    dsc_mean = pd.Series({'Dx': np.nan, 'Dy': np.nan, 'Dz': np.nan})
     if dsc_files:
         df_dsc = cdf_to_df(dsc_files[0], 'Epoch', {
                            'GSE_POS': ['Dx', 'Dy', 'Dz']})
-        df_dsc[['Dx', 'Dy', 'Dz']] /= 6371.0
-        gse_to_gsm(df_dsc, ['Dx', 'Dy', 'Dz'])
-        dsc_mean = df_dsc[['Dx', 'Dy', 'Dz']].mean()
-    else:
-        dsc_mean = pd.Series({'Dx': np.nan, 'Dy': np.nan, 'Dz': np.nan})
+        if not df_dsc.empty and {'Dx', 'Dy', 'Dz'}.issubset(df_dsc.columns):
+            df_dsc[['Dx', 'Dy', 'Dz']] /= 6371.0
+            gse_to_gsm(df_dsc, ['Dx', 'Dy', 'Dz'])
+            dsc_mean = df_dsc[['Dx', 'Dy', 'Dz']].mean()
 
     # Write one merged row for downstream propagation logic.
     with open(output_filepath, 'w', encoding='utf-8') as f:
@@ -410,54 +555,3 @@ def create_position_file(day, cda, cleanup_cdfs=True):
                 pass
 
 
-def get_one_day_swmf_input(day, cda):
-    """Download and process all three satellites for a single UTC day.
-
-    Downloads ACE and WIND CDF data via CDAWeb and DSCOVR 1-minute products
-    from NOAA NGDC, then calls per-satellite processors to write
-    L1_ace.dat, L1_dscovr.dat, and L1_wind.dat into L1/YYYY/MM/DD/.
-
-    Parameters
-    ----------
-    day : str  ('YYYY-MM-DD')
-    cda : pyspedas.CDAWeb
-    """
-    # Process one UTC day end-to-end for ACE/DSCOVR/WIND.
-    trange_start = day
-    trange_end = (pd.to_datetime(day) +
-                  pd.Timedelta(days=1)).strftime('%Y-%m-%d')
-
-    data_dir = 'cdf_temp'
-
-    # Download ACE+WIND CDF sources via CDAWeb.
-    datasets = ['AC_H0_MFI', 'AC_H0_SWE', 'WI_H0_MFI', 'WI_H1_SWE']
-
-    download_cdaweb_files(cda, datasets, trange_start, trange_end, data_dir)
-
-    # Variable maps define how source variables land in L1 columns.
-    ace_map = {
-        'mag_time': 'Epoch',
-        'mag_vars': {'BGSM': ['Bx', 'By', 'Bz']},
-        'plasma_time': 'Epoch',
-        'plasma_vars': {'V_GSM': ['Ux', 'Uy', 'Uz'], 'Np': ['rho'], 'Tpr': ['T']},
-    }
-
-    win_map = {
-        'mag_time': 'Epoch',
-        'mag_vars': {'BGSM': ['Bx', 'By', 'Bz']},
-        'plasma_time': 'Epoch',
-        'plasma_vars': {
-            'Proton_VX_moment': ['Ux'],
-            'Proton_VY_moment': ['Uy'],
-            'Proton_VZ_moment': ['Uz'],
-            'Proton_Np_moment': ['rho'],
-            'Proton_W_moment': ['v_th'],
-        },
-    }
-
-    # Run per-satellite processing and write individual L1 files.
-    process_satellite('ace', 'ac_h0_mfi', 'ac_h0_swe',
-                      ace_map, data_dir, trange_start, trange_end)
-    process_satellite_ngdc(day, data_dir, trange_start, trange_end)
-    process_satellite('wind', 'wi_h0_mfi', 'wi_h1_swe',
-                      win_map, data_dir, trange_start, trange_end)

@@ -1,16 +1,12 @@
 # Downloaded CDF/NetCDF source data
 cdf_temp/
 
-# Plot outputs
-plots/
-
 # Data 
 L1/
 L1_raw/
 
-# Debug Work
+# Developer Work
 scratch/
-l1_example.py
 
 # Claude Code 
 .claude/
@@ -22,5 +18,5 @@ __pycache__/
 .DS_Store
 .vscode/
 
-# Omni Comparison 
-omni_comparison/
+# log files
+*.log

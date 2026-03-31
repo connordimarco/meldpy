@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "meldpy: Multi-satellite solar wind merging pipeline"
+version: 0.1.0
+repository-code: "https://github.com/connordimarco/SWMF-IMF"
+license: MIT
+authors:
+  - family-names: DiMarco
+    given-names: Connor
+    orcid: "https://orcid.org/0000-0003-0706-4309"
+    affiliation: "Department of Climate and Space Sciences and Engineering, University of Michigan"
+    alias: "Los Alamos National Laboratory"
+  - family-names: Tóth
+    given-names: Gábor
+    orcid: "https://orcid.org/0000-0001-8459-2100"
+    affiliation: "Department of Climate and Space Sciences and Engineering, University of Michigan"
+  - family-names: Pulkkinen
+    given-names: Tuija
+    orcid: "https://orcid.org/0000-0002-6317-381X"
+    affiliation: "Department of Climate and Space Sciences and Engineering, University of Michigan"

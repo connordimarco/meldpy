@@ -21,11 +21,11 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
-from l1_combine_T import combine_temperature
-from l1_filters import smooth_transitions, interpolate_with_limits, INTERP_LIMITS
-from l1_propagation import ballistic_propagation
-from l1_quality import score_all_plasma
-from l1_readers import read_l1_data
+from .l1_combine_T import combine_temperature
+from .l1_filters import smooth_transitions, interpolate_with_limits, INTERP_LIMITS
+from .l1_propagation import ballistic_propagation
+from .l1_quality import score_all_plasma
+from .l1_readers import read_l1_data
 
 
 SAT_CODE = {'ace': 1, 'dscovr': 2, 'wind': 3}

@@ -4,23 +4,35 @@ Downloads, quality-screens, and combines 1-minute solar wind from **ACE**, **DSC
 
 ---
 
+## Installation
+
+```bash
+pip install git+https://github.com/connordimarco/SWMF-IMF.git
+```
+
 ## Usage
 
+Run from wherever you want the data to land. `L1/` and `L1_raw/` are created relative to your current directory.
+
+```bash
+cd /path/to/my/data
+python my_script.py
+```
+
 ```python
-from l1_pipeline import get_one_day_swmf_input, create_position_file
-from l1_combine import create_combined_l1_files
-from l1_downloaders import CDAWeb
+from meldpy import download_day, process_day, create_combined_l1_files
+from pyspedas import CDAWeb
 
 cda = CDAWeb()
 for day in ('2024-05-09', '2024-05-10', '2024-05-11'):
-    get_one_day_swmf_input(day, cda)
-    create_position_file(day, cda)
+    download_day(day, cda)   # fetch raw data -> L1_raw/ (skipped if already done)
+    process_day(day)         # despike/filter  -> L1/
 
 create_combined_l1_files('2024-05-10', prev_day='2024-05-09', next_day='2024-05-11')
 # Outputs: L1/2024/05/10/IMF_14Re.dat, IMF_32Re.dat  (2024-05-10 only)
 ```
 
-`prev_day`/`next_day` are required for correct results: Stage 1 processes days in isolation and cannot bridge gaps that straddle midnight. The combine step needs the adjacent days already downloaded.
+`prev_day`/`next_day` are required for correct results: the combine step needs adjacent days already processed. `download_day` also creates `L1_satpos.dat` -- no separate call needed.
 
 ---
 
