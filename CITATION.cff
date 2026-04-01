@@ -2,7 +2,7 @@ cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 title: "MIDLPy: Multi-Satellite Integrated Dataset from L1 Python Library"
 version: 0.1.0
-repository-code: "https://github.com/connordimarco/midlpy"
+repository-code: "https://github.com/connordimarco/MIDLPy"
 license: MIT
 authors:
   - family-names: DiMarco
