@@ -3,9 +3,9 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "meldpy"
+name = "midlpy"
 version = "0.1.0"
-description = "Michigan Ensemble L1 Dataset Python Library"
+description = "Multi-Satellite Integrated Dataset from L1 Python Library"
 requires-python = ">=3.9"
 dependencies = [
     "numpy>=1.24",
@@ -19,4 +19,4 @@ dependencies = [
 ]
 
 [tool.setuptools]
-packages = ["meldpy"]
+packages = ["midlpy"]

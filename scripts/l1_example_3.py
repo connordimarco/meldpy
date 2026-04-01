@@ -4,11 +4,11 @@ import logging
 import os
 
 import pandas as pd
-import meldpy.l1_quality as l1_quality
-import meldpy.l1_filters as l1_filters
-import meldpy.l1_combine as l1_combine
-import meldpy.l1_pipeline as l1_pipeline
-from meldpy import create_combined_l1_files, download_day, process_day
+import midlpy.l1_quality as l1_quality
+import midlpy.l1_filters as l1_filters
+import midlpy.l1_combine as l1_combine
+import midlpy.l1_pipeline as l1_pipeline
+from midlpy import create_combined_l1_files, download_day, process_day
 from pyspedas import CDAWeb
 
 log_file = f'l1_middle_{pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")}.log'

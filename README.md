@@ -1,4 +1,4 @@
-# Michigan Ensemble L1 Dataset
+# Multi-Satellite Integrated Dataset from L1 (MIDL)
 
 Downloads, quality-screens, and combines 1-minute solar wind from **ACE**, **DSCOVR**, and **WIND** into merged time series.
 
@@ -7,7 +7,7 @@ Downloads, quality-screens, and combines 1-minute solar wind from **ACE**, **DSC
 ## Installation
 
 ```bash
-pip install git+https://github.com/connordimarco/meldpy.git
+pip install git+https://github.com/connordimarco/MIDLPy.git
 ```
 
 ## Usage
@@ -20,7 +20,7 @@ python my_script.py
 ```
 
 ```python
-from meldpy import download_day, process_day, create_combined_l1_files
+from midlpy import download_day, process_day, create_combined_l1_files
 from pyspedas import CDAWeb
 
 cda = CDAWeb()
