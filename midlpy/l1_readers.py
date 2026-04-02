@@ -187,23 +187,14 @@ def read_l1_data(filepath):
     -------
     pd.DataFrame  (empty if the file is missing or unreadable)
     """
-    # This matches the custom L1 ASCII column order.
-    col_names = [
-        'year',
-        'mo',
-        'dy',
-        'hr',
-        'mn',
-        'sc',
-        'msc',
-        'Bx',
-        'By',
-        'Bz',
-        'Ux',
-        'Uy',
-        'Uz',
-        'rho',
-        'T',
+    # Column layouts: new format (5 time cols) and legacy (7 time cols).
+    col_names_new = [
+        'year', 'mo', 'dy', 'hr', 'mn',
+        'Bx', 'By', 'Bz', 'Ux', 'Uy', 'Uz', 'rho', 'T',
+    ]
+    col_names_legacy = [
+        'year', 'mo', 'dy', 'hr', 'mn', 'sc', 'msc',
+        'Bx', 'By', 'Bz', 'Ux', 'Uy', 'Uz', 'rho', 'T',
     ]
 
     if not os.path.exists(filepath):
@@ -211,6 +202,18 @@ def read_l1_data(filepath):
         return pd.DataFrame()
 
     try:
+        # Detect format by reading the header line (line 2, 0-indexed).
+        with open(filepath, 'r', encoding='utf-8') as f:
+            for _ in range(1):
+                f.readline()
+            header_line = f.readline()
+        has_sc_msc = 'sc' in header_line.split()
+
+        if has_sc_msc:
+            col_names = col_names_legacy
+        else:
+            col_names = col_names_new
+
         # Read only canonical physics columns so files can carry extra metadata.
         df = pd.read_csv(filepath, sep=r'\s+', names=col_names,
                          comment='#', skiprows=3, usecols=range(len(col_names)))
@@ -221,10 +224,15 @@ def read_l1_data(filepath):
     if df.empty:
         return df
 
-    # Rebuild a precise timestamp from date/time + milliseconds.
-    dt_cols = df[['year', 'mo', 'dy', 'hr', 'mn', 'sc']].copy()
-    dt_cols.columns = ['year', 'month', 'day', 'hour', 'minute', 'second']
-    df['timestamp'] = pd.to_datetime(
-        dt_cols) + pd.to_timedelta(df['msc'], unit='ms')
+    # Rebuild timestamp from date/time columns.
+    if has_sc_msc:
+        dt_cols = df[['year', 'mo', 'dy', 'hr', 'mn', 'sc']].copy()
+        dt_cols.columns = ['year', 'month', 'day', 'hour', 'minute', 'second']
+        df['timestamp'] = pd.to_datetime(
+            dt_cols) + pd.to_timedelta(df['msc'], unit='ms')
+    else:
+        dt_cols = df[['year', 'mo', 'dy', 'hr', 'mn']].copy()
+        dt_cols.columns = ['year', 'month', 'day', 'hour', 'minute']
+        df['timestamp'] = pd.to_datetime(dt_cols)
 
     return df.set_index('timestamp')

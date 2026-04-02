@@ -42,9 +42,11 @@ def _switch_threshold(col):
         'Bx': 8.0,
         'By': 8.0,
         'Bz': 8.0,
+        '|B|': 8.0,
         'Ux': 80.0,
         'Uy': 40.0,
         'Uz': 40.0,
+        '|Vt|': 40.0,
         'rho': 2.0,
     }
     return thresholds.get(col, np.inf)
@@ -172,6 +174,41 @@ def _select_column_with_continuity(col, sat_series, bad_masks=None):
             pd.Series(out_source, index=index))
 
 
+def _apply_source_to_components(source_series, component_sat_series, index):
+    """Pick component values using a pre-computed source decision.
+
+    Used for coupled vector selection: the source decision comes from
+    running the magnitude (|B| or |Vt|) through the agreement logic,
+    then this function applies that decision to the original components.
+
+    Mirrors the aggregation in _select_column_with_continuity:
+      1 satellite  -> use its value
+      2 satellites -> mean
+      3 satellites -> median
+    """
+    CODE_TO_SAT = {v: k for k, v in SAT_CODE.items()}
+    out = np.full(len(index), np.nan, dtype=float)
+
+    for i in range(len(index)):
+        src = source_series.iloc[i]
+        if src is None:
+            continue
+        codes = sorted(src)
+        vals = [component_sat_series[CODE_TO_SAT[c]].iloc[i]
+                for c in codes
+                if pd.notna(component_sat_series[CODE_TO_SAT[c]].iloc[i])]
+        if not vals:
+            continue
+        if len(vals) == 1:
+            out[i] = vals[0]
+        elif len(vals) == 2:
+            out[i] = 0.5 * (vals[0] + vals[1])
+        else:
+            out[i] = np.median(vals)
+
+    return pd.Series(out, index=index)
+
+
 def _read_sat_positions(pos_file):
     """Return per-satellite noon X positions in km from L1_satpos.dat.
 
@@ -202,12 +239,12 @@ def _read_sat_positions(pos_file):
 
 def combine_data_priority(data_map, master_grid):
     # Align each satellite to the same timeline before merging.
-    df_ace = _fill_short_gaps(data_map.get('ace', pd.DataFrame(
-        index=master_grid)).reindex(master_grid))
-    df_dsc = _fill_short_gaps(data_map.get('dscovr', pd.DataFrame(
-        index=master_grid)).reindex(master_grid))
-    df_win = _fill_short_gaps(data_map.get('wind', pd.DataFrame(
-        index=master_grid)).reindex(master_grid))
+    df_ace = data_map.get('ace', pd.DataFrame(
+        index=master_grid)).reindex(master_grid)
+    df_dsc = data_map.get('dscovr', pd.DataFrame(
+        index=master_grid)).reindex(master_grid)
+    df_win = data_map.get('wind', pd.DataFrame(
+        index=master_grid)).reindex(master_grid)
 
     # --- Run quality scorer across all three satellites ---
     print('  Running plasma quality assessment for all satellites...')
@@ -215,27 +252,70 @@ def combine_data_priority(data_map, master_grid):
 
     # T is excluded here — handled separately by combine_temperature().
     cols = ['Bx', 'By', 'Bz', 'Ux', 'Uy', 'Uz', 'rho']
-    plasma_cols = {'Ux', 'Uy', 'Uz', 'rho'}
     df_combined = pd.DataFrame(index=master_grid, columns=cols)
     nsat_map = {}
     source_map = {}   # col -> pd.Series of frozenset(sat_codes)
 
-    # Process each physical variable with priority + continuity rules.
-    for col in cols:
-        sat_series = {
+    def _sat_series_for(col):
+        return {
             'ace': df_ace[col] if col in df_ace else pd.Series(np.nan, index=master_grid),
             'dscovr': df_dsc[col] if col in df_dsc else pd.Series(np.nan, index=master_grid),
             'wind': df_win[col] if col in df_win else pd.Series(np.nan, index=master_grid),
         }
 
-        # Quality masks for plasma variables; None for magnetic field.
-        col_masks = all_bad_masks if col in plasma_cols else None
+    # --- Block A: Magnetic field (Bx, By, Bz) coupled via |B| ---
+    # Select source based on field magnitude so all three components
+    # always come from the same satellite, preserving div(B) = 0.
+    b_series = {comp: _sat_series_for(comp) for comp in ('Bx', 'By', 'Bz')}
+    mag_b_series = {}
+    for sat in ('ace', 'dscovr', 'wind'):
+        mag_b_series[sat] = np.sqrt(
+            b_series['Bx'][sat]**2 +
+            b_series['By'][sat]**2 +
+            b_series['Bz'][sat]**2)
 
+    _, b_nsat, b_source = _select_column_with_continuity(
+        '|B|', mag_b_series, bad_masks=None)
+
+    for comp in ('Bx', 'By', 'Bz'):
+        df_combined[comp] = _apply_source_to_components(
+            b_source, b_series[comp], master_grid)
+        nsat_map[comp] = b_nsat
+        source_map[comp] = b_source
+
+    # --- Block B: Transverse velocity (Uy, Uz) coupled via |Vt| ---
+    # Select source based on transverse speed so both components come
+    # from the same satellite, preserving vector consistency.
+    vt_series = {comp: _sat_series_for(comp) for comp in ('Uy', 'Uz')}
+    mag_vt_series = {}
+    for sat in ('ace', 'dscovr', 'wind'):
+        mag_vt_series[sat] = np.sqrt(
+            vt_series['Uy'][sat]**2 +
+            vt_series['Uz'][sat]**2)
+
+    # Combined quality mask: satellite is bad if EITHER Uy or Uz is flagged.
+    vt_bad_masks = {}
+    for code in (1, 2, 3):
+        sat_masks = all_bad_masks.get(code)
+        if sat_masks is not None:
+            uy_bad = sat_masks.get('Uy', pd.Series(False, index=master_grid))
+            uz_bad = sat_masks.get('Uz', pd.Series(False, index=master_grid))
+            vt_bad_masks[code] = {'|Vt|': uy_bad | uz_bad}
+
+    _, vt_nsat, vt_source = _select_column_with_continuity(
+        '|Vt|', mag_vt_series, bad_masks=vt_bad_masks)
+
+    for comp in ('Uy', 'Uz'):
+        df_combined[comp] = _apply_source_to_components(
+            vt_source, vt_series[comp], master_grid)
+        nsat_map[comp] = vt_nsat
+        source_map[comp] = vt_source
+
+    # --- Block C: Independent variables (Ux, rho) --- unchanged logic.
+    for col in ('Ux', 'rho'):
+        sat_series = _sat_series_for(col)
         values, n_sat, source = _select_column_with_continuity(
-            col,
-            sat_series,
-            bad_masks=col_masks,
-        )
+            col, sat_series, bad_masks=all_bad_masks)
         df_combined[col] = values
         nsat_map[col] = n_sat
         source_map[col] = source
@@ -382,7 +462,7 @@ def create_combined_l1_files(day, prev_day=None, next_day=None,
     with open(outfile_comb, 'w', encoding='utf-8') as f:
         f.write(
             f'Combined L1 Data for {day} (Unpropagated) (GSM nT, km/s, cm^-3, K)\n')
-        f.write('year  mo  dy  hr  mn  sc msc Bx By Bz Ux Uy Uz rho T nSat\n')
+        f.write('year  mo  dy  hr  mn Bx By Bz Ux Uy Uz rho T nSat\n')
         f.write('#START\n')
         for t, row in df_today.iterrows():
             if pd.isna(row['Bx']):
@@ -390,7 +470,7 @@ def create_combined_l1_files(day, prev_day=None, next_day=None,
             n_sat_val = int(prov_today.at[t, 'nSat']) if pd.notna(
                 prov_today.at[t, 'nSat']) else 0
             f.write(
-                f"{t.year:4d} {t.month:2d} {t.day:2d} {t.hour:2d} {t.minute:2d} {t.second:2d} {t.microsecond//1000:3d} "
+                f"{t.year:4d} {t.month:2d} {t.day:2d} {t.hour:2d} {t.minute:2d} "
                 f"{row['Bx']:8.2f} {row['By']:8.2f} {row['Bz']:8.2f} "
                 f"{row['Ux']:9.2f} {row['Uy']:9.2f} {row['Uz']:9.2f} "
                 f"{row['rho']:9.4f} {row['T']:10.1f} {n_sat_val:2d}\n"
@@ -426,13 +506,13 @@ def create_combined_l1_files(day, prev_day=None, next_day=None,
         with open(outfile_prop, 'w', encoding='utf-8') as f:
             f.write(
                 f'Propagated L1 Data for {day} (Target: {b_re} Re) (GSM nT, km/s, cm^-3, K)\n')
-            f.write('year mo dy hr mn sc msc Bx By Bz Ux Uy Uz rho T\n')
+            f.write('year mo dy hr mn Bx By Bz Ux Uy Uz rho T\n')
             f.write('#START\n')
             for t, row in df_propagated.iterrows():
                 if pd.isna(row['Bx']):
                     continue
                 f.write(
-                    f"{t.year:4d} {t.month:2d} {t.day:2d} {t.hour:2d} {t.minute:2d} {t.second:2d} {t.microsecond//1000:3d} "
+                    f"{t.year:4d} {t.month:2d} {t.day:2d} {t.hour:2d} {t.minute:2d} "
                     f"{row['Bx']:8.2f} {row['By']:8.2f} {row['Bz']:8.2f} "
                     f"{row['Ux']:9.2f} {row['Uy']:9.2f} {row['Uz']:9.2f} "
                     f"{row['rho']:9.4f} {row['T']:10.1f}\n"

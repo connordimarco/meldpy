@@ -69,12 +69,12 @@ def _write_l1_dat(df, output_file, source_label):
     """Write one L1-format ASCII file from a 1-minute DataFrame."""
     with open(output_file, 'w', encoding='utf-8') as f:
         f.write(f'{source_label} (nT, km/s, cm^-3, K)\n')
-        f.write('year  mo  dy  hr  mn  sc msc Bx By Bz Ux Uy Uz rho T\n')
+        f.write('year  mo  dy  hr  mn Bx By Bz Ux Uy Uz rho T\n')
         f.write('#START\n')
 
         for t, row in df.iterrows():
             f.write(
-                f"{t.year:4d} {t.month:2d} {t.day:2d} {t.hour:2d} {t.minute:2d} {t.second:2d} {t.microsecond//1000:3d} "
+                f"{t.year:4d} {t.month:2d} {t.day:2d} {t.hour:2d} {t.minute:2d} "
                 f"{row['Bx']:8.2f} {row['By']:8.2f} {row['Bz']:8.2f} "
                 f"{row['Ux']:9.2f} {row['Uy']:9.2f} {row['Uz']:9.2f} "
                 f"{row['rho']:9.4f} {row['T']:10.1f}\n"
@@ -90,6 +90,7 @@ def process_satellite(
     trange_start,
     trange_end,
     cleanup_cdfs=True,
+    raw_base='L1_raw',
 ):
     """Download-phase processing for one CDAWeb-sourced satellite.
 
@@ -198,7 +199,7 @@ def process_satellite(
         print(f'  {sat_name}: all data is NaN for this day, skipping L1_raw write.')
     else:
         dt_start = datetime.strptime(trange_start, '%Y-%m-%d')
-        raw_output_dir = dt_start.strftime('L1_raw/%Y/%m/%d')
+        raw_output_dir = os.path.join(raw_base, dt_start.strftime('%Y/%m/%d'))
         os.makedirs(raw_output_dir, exist_ok=True)
         raw_output_file = os.path.join(raw_output_dir, f'L1_{sat_name}.dat')
         _write_l1_dat(
@@ -218,7 +219,8 @@ def process_satellite(
                 print(f'Could not remove {fpath}: {e}')
 
 
-def process_satellite_ngdc(day, data_dir, trange_start, trange_end, cleanup=True):
+def process_satellite_ngdc(day, data_dir, trange_start, trange_end, cleanup=True,
+                           raw_base='L1_raw'):
     """Download-phase processing for DSCOVR using NOAA NGDC 1-minute products.
 
     Downloads f1m (plasma) and m1m (magnetometer) gzipped NetCDF files,
@@ -286,7 +288,7 @@ def process_satellite_ngdc(day, data_dir, trange_start, trange_end, cleanup=True
         print('  dscovr: all data is NaN for this day, skipping L1_raw write.')
     else:
         dt_start = datetime.strptime(trange_start, '%Y-%m-%d')
-        raw_output_dir = dt_start.strftime('L1_raw/%Y/%m/%d')
+        raw_output_dir = os.path.join(raw_base, dt_start.strftime('%Y/%m/%d'))
         os.makedirs(raw_output_dir, exist_ok=True)
         raw_output_file = os.path.join(raw_output_dir, 'L1_dscovr.dat')
         _write_l1_dat(
@@ -306,22 +308,27 @@ def process_satellite_ngdc(day, data_dir, trange_start, trange_end, cleanup=True
                 print(f'  Could not remove {fpath}: {e}')
 
 
-def process_raw_to_filtered(sat_name, day):
-    """Phase 2: read a raw L1_raw file, despike, interpolate, write to L1/.
+def process_raw_to_filtered(sat_name, day, raw_base='L1_raw', out_base='L1'):
+    """Phase 2: read a raw file, despike, interpolate, write to out_base/.
 
-    Skips gracefully if the L1_raw file does not exist (satellite had no
+    Skips gracefully if the raw file does not exist (satellite had no
     data for this day).
 
     Parameters
     ----------
     sat_name : str  ('ace' | 'dscovr' | 'wind')
     day : str  ('YYYY-MM-DD')
+    raw_base : str
+        Root of raw data directory.
+    out_base : str
+        Root of filtered output directory.
     """
     dt = datetime.strptime(day, '%Y-%m-%d')
-    raw_path = dt.strftime(f'L1_raw/%Y/%m/%d/L1_{sat_name}.dat')
+    raw_path = os.path.join(raw_base, dt.strftime('%Y/%m/%d'),
+                            f'L1_{sat_name}.dat')
 
     if not os.path.exists(raw_path):
-        print(f'  No L1_raw file for {sat_name} on {day}, skipping filter step.')
+        print(f'  No raw file for {sat_name} on {day}, skipping filter step.')
         return
 
     df = read_l1_data(raw_path)
@@ -335,7 +342,7 @@ def process_raw_to_filtered(sat_name, day):
     df_filtered = despike(df)
     df_filtered = interpolate_with_limits(df_filtered, INTERP_LIMITS)
 
-    output_dir = dt.strftime('L1/%Y/%m/%d')
+    output_dir = os.path.join(out_base, dt.strftime('%Y/%m/%d'))
     os.makedirs(output_dir, exist_ok=True)
     output_file = os.path.join(output_dir, f'L1_{sat_name}.dat')
     _write_l1_dat(
@@ -353,21 +360,27 @@ def process_raw_to_filtered(sat_name, day):
 _SENTINEL_NAME = '.download_complete'
 
 
-def download_day(day, cda):
-    """Phase 1: download raw data for all satellites and write to L1_raw/.
+def download_day(day, cda, raw_dir='L1_raw', pos_dir='L1'):
+    """Phase 1: download raw data for all satellites and write to raw_dir/.
 
     Checks for a sentinel file to skip entirely on re-runs.  Per-satellite
-    checks avoid re-downloading satellites whose L1_raw file already exists.
+    checks avoid re-downloading satellites whose raw file already exists.
     Also creates the position file (requires CDF downloads).
 
     Parameters
     ----------
     day : str  ('YYYY-MM-DD')
     cda : pyspedas.CDAWeb
+    raw_dir : str
+        Root of the raw data directory tree. Files are written to
+        raw_dir/YYYY/MM/DD/L1_<sat>.dat.
+    pos_dir : str
+        Root of the directory for satellite position files. Written to
+        pos_dir/YYYY/MM/DD/L1_satpos.dat.
     """
     dt = datetime.strptime(day, '%Y-%m-%d')
-    raw_dir = dt.strftime('L1_raw/%Y/%m/%d')
-    sentinel = os.path.join(raw_dir, _SENTINEL_NAME)
+    day_raw_dir = os.path.join(raw_dir, dt.strftime('%Y/%m/%d'))
+    sentinel = os.path.join(day_raw_dir, _SENTINEL_NAME)
 
     if os.path.exists(sentinel):
         print(f'[download_day] {day}: sentinel exists, skipping download.')
@@ -378,9 +391,9 @@ def download_day(day, cda):
     data_dir = 'cdf_temp'
 
     # Determine which satellites still need downloading.
-    need_ace = not os.path.exists(os.path.join(raw_dir, 'L1_ace.dat'))
-    need_wind = not os.path.exists(os.path.join(raw_dir, 'L1_wind.dat'))
-    need_dscovr = not os.path.exists(os.path.join(raw_dir, 'L1_dscovr.dat'))
+    need_ace = not os.path.exists(os.path.join(day_raw_dir, 'L1_ace.dat'))
+    need_wind = not os.path.exists(os.path.join(day_raw_dir, 'L1_wind.dat'))
+    need_dscovr = not os.path.exists(os.path.join(day_raw_dir, 'L1_dscovr.dat'))
 
     # Download CDAWeb datasets for ACE + WIND in a single API call.
     if need_ace or need_wind:
@@ -412,24 +425,27 @@ def download_day(day, cda):
 
     if need_ace:
         process_satellite('ace', 'ac_h0_mfi', 'ac_h0_swe',
-                          ace_map, data_dir, trange_start, trange_end)
+                          ace_map, data_dir, trange_start, trange_end,
+                          raw_base=raw_dir)
     if need_dscovr:
-        process_satellite_ngdc(day, data_dir, trange_start, trange_end)
+        process_satellite_ngdc(day, data_dir, trange_start, trange_end,
+                               raw_base=raw_dir)
     if need_wind:
         process_satellite('wind', 'wi_h0_mfi', 'wi_h1_swe',
-                          win_map, data_dir, trange_start, trange_end)
+                          win_map, data_dir, trange_start, trange_end,
+                          raw_base=raw_dir)
 
     # Position file (always recreate -- cheap and needed by combine step).
-    create_position_file(day, cda)
+    create_position_file(day, cda, pos_dir=pos_dir)
 
     # Write sentinel so future runs skip this day entirely.
-    os.makedirs(raw_dir, exist_ok=True)
+    os.makedirs(day_raw_dir, exist_ok=True)
     with open(sentinel, 'w') as f:
         f.write(f'Downloaded {day}\n')
     print(f'[download_day] {day}: done.')
 
 
-def process_day(day):
+def process_day(day, raw_dir='L1_raw', out_dir='L1'):
     """Phase 2: read L1_raw, despike/filter, write per-satellite files to L1/.
 
     Re-runnable without re-downloading.  Skips satellites that have no
@@ -438,10 +454,14 @@ def process_day(day):
     Parameters
     ----------
     day : str  ('YYYY-MM-DD')
+    raw_dir : str
+        Root of the raw data directory tree.
+    out_dir : str
+        Root of the filtered output directory tree.
     """
-    print(f'\n[process_day] Filtering L1_raw -> L1 for {day}...')
+    print(f'\n[process_day] Filtering {raw_dir} -> {out_dir} for {day}...')
     for sat in ('ace', 'dscovr', 'wind'):
-        process_raw_to_filtered(sat, day)
+        process_raw_to_filtered(sat, day, raw_base=raw_dir, out_base=out_dir)
 
 
 def get_one_day_swmf_input(day, cda):
@@ -454,7 +474,7 @@ def get_one_day_swmf_input(day, cda):
     process_day(day)
 
 
-def create_position_file(day, cda, cleanup_cdfs=True):
+def create_position_file(day, cda, cleanup_cdfs=True, pos_dir='L1'):
     """Write L1_satpos.dat containing mean noon GSM positions for all three satellites.
 
     Downloads a narrow 11:00-13:00 UT window of orbit data, averages the
@@ -484,7 +504,7 @@ def create_position_file(day, cda, cleanup_cdfs=True):
                 pass
 
     dt_start = datetime.strptime(day, '%Y-%m-%d')
-    output_dir = dt_start.strftime('L1/%Y/%m/%d')
+    output_dir = os.path.join(pos_dir, dt_start.strftime('%Y/%m/%d'))
     os.makedirs(output_dir, exist_ok=True)
     output_filepath = os.path.join(output_dir, 'L1_satpos.dat')
 

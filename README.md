@@ -12,27 +12,52 @@ pip install git+https://github.com/connordimarco/MIDLPy.git
 
 ## Usage
 
-Run from wherever you want the data to land. `L1/` and `L1_raw/` are created relative to your current directory.
+Run from wherever you want the data to land. `L1_raw/` and output are created relative to your current directory.
 
-```bash
-cd /path/to/my/data
-python my_script.py
-```
+### Step 1: Download raw data
 
 ```python
-from midlpy import download_day, process_day, create_combined_l1_files
+from midlpy import download_day
 from pyspedas import CDAWeb
 
 cda = CDAWeb()
 for day in ('2024-05-09', '2024-05-10', '2024-05-11'):
-    download_day(day, cda)   # fetch raw data -> L1_raw/ (skipped if already done)
-    process_day(day)         # despike/filter  -> L1/
-
-create_combined_l1_files('2024-05-10', prev_day='2024-05-09', next_day='2024-05-11')
-# Outputs: L1/2024/05/10/IMF_14Re.dat, IMF_32Re.dat  (2024-05-10 only)
+    download_day(day, cda, raw_dir='L1_raw', pos_dir='L1_sat_positions')
 ```
 
-`prev_day`/`next_day` are required for correct results: the combine step needs adjacent days already processed. `download_day` also creates `L1_satpos.dat` -- no separate call needed.
+`download_day` writes per-satellite .dat files to `raw_dir/YYYY/MM/DD/` and position files to `pos_dir/YYYY/MM/DD/L1_satpos.dat`. Skips if a `.download_complete` sentinel already exists.
+
+### Step 2: Process
+
+```python
+from midlpy import midl
+
+result = midl('2024-05-09', '2024-05-11', raw_dir='L1_raw', pos_dir='L1_sat_positions')
+# result.unpropagated   -> merged DataFrame at reference satellite position
+# result.propagated[14] -> propagated to 14 Re (bow shock nose)
+# result.propagated[32] -> propagated to 32 Re (SWMF boundary)
+```
+
+`midl(start, end)` reads from `L1_raw/`, runs the full pipeline (despike, interpolate, propagate-to-reference, quality-score, source-select, combine, smooth, propagate-to-boundary), and returns a `MIDLResult`. No intermediate files needed.
+
+### Step 3: Save output (scripts, not part of library)
+
+```python
+# In scripts/ directory:
+from l1_writers import write_monthly_parquet, write_daily_dat
+
+write_monthly_parquet(result, output_dir='L1_db/data')  # monthly Parquet for database
+write_daily_dat(result, output_dir='L1')                 # per-day .dat files
+```
+
+### Plotting (scripts, not part of library)
+
+```python
+from l1_plot import plot_day, plot_variable
+
+plot_day(result, '2024-05-10')             # 8-var overview -> plots/
+plot_variable(result, 'Bz', '2024-05-10')  # single variable -> plots/
+```
 
 ---
 
@@ -70,7 +95,7 @@ flowchart TD
             Q5["⑤ Near-zero Uy/Uz  —  DSCOVR only\nFaraday-cup transverse-velocity artifact\n|Uy| or |Uz| ≤ 0.5 km/s while non-NaN"]
         end
 
-        VS["Per-variable satellite selection  ·  Bx  By  Bz  ·  Ux  Uy  Uz  ·  rho\nPlasma: quality bad-masks applied before selection\nMagnetic field: bypasses quality gate\n3 satellites agree within threshold  →  median of all three\n2 satellites agree within threshold  →  mean of closest agreeing pair\nNone agree  →  fallback: closest to previous output  WIND at startup\n  locked source switches only after 3 consecutive minutes of preference"]
+        VS["Satellite source selection\nB: coupled via |B| magnitude  all 3 components from same satellite\nUy  Uz: coupled via |Vt|  both from same satellite\nUx  rho: selected independently\nPlasma: quality bad-masks applied before selection\nMagnetic field: bypasses quality gate\n3 satellites agree within threshold  →  median of all three\n2 satellites agree within threshold  →  mean of closest agreeing pair\nNone agree  →  fallback: closest to previous output  WIND at startup\n  locked source switches only after 3 consecutive minutes of preference"]
 
         subgraph TC["combine_temperature()  ·  l1_combine_T.py"]
             T1["① 3-point median  per satellite\nremoves single-minute spikes in each T stream"]
