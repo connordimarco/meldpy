@@ -232,7 +232,7 @@ def _propagate_to_boundary(df_combined, ref_x_daily, target_km):
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def midl(start, end, raw_dir='L1_raw', pos_dir='L1',
+def midl(start, end, raw_dir='L1_raw', pos_dir='L1_positions',
          boundaries_re=(14, 32)):
     """Process L1 solar wind data for [start, end].
 

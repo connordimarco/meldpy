@@ -360,7 +360,7 @@ def process_raw_to_filtered(sat_name, day, raw_base='L1_raw', out_base='L1'):
 _SENTINEL_NAME = '.download_complete'
 
 
-def download_day(day, cda, raw_dir='L1_raw', pos_dir='L1'):
+def download_day(day, cda, raw_dir='L1_raw', pos_dir='L1_positions'):
     """Phase 1: download raw data for all satellites and write to raw_dir/.
 
     Checks for a sentinel file to skip entirely on re-runs.  Per-satellite
@@ -474,7 +474,7 @@ def get_one_day_swmf_input(day, cda):
     process_day(day)
 
 
-def create_position_file(day, cda, cleanup_cdfs=True, pos_dir='L1'):
+def create_position_file(day, cda, cleanup_cdfs=True, pos_dir='L1_positions'):
     """Write L1_satpos.dat containing mean noon GSM positions for all three satellites.
 
     Downloads a narrow 11:00-13:00 UT window of orbit data, averages the

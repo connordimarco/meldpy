@@ -22,7 +22,7 @@ from pyspedas import CDAWeb
 
 cda = CDAWeb()
 for day in ('2024-05-09', '2024-05-10', '2024-05-11'):
-    download_day(day, cda, raw_dir='L1_raw', pos_dir='L1_sat_positions')
+    download_day(day, cda, raw_dir='L1_raw', pos_dir='L1_positions')
 ```
 
 `download_day` writes per-satellite .dat files to `raw_dir/YYYY/MM/DD/` and position files to `pos_dir/YYYY/MM/DD/L1_satpos.dat`. Skips if a `.download_complete` sentinel already exists.
@@ -32,7 +32,7 @@ for day in ('2024-05-09', '2024-05-10', '2024-05-11'):
 ```python
 from midlpy import midl
 
-result = midl('2024-05-09', '2024-05-11', raw_dir='L1_raw', pos_dir='L1_sat_positions')
+result = midl('2024-05-09', '2024-05-11', raw_dir='L1_raw', pos_dir='L1_positions')
 # result.unpropagated   -> merged DataFrame at reference satellite position
 # result.propagated[14] -> propagated to 14 Re (bow shock nose)
 # result.propagated[32] -> propagated to 32 Re (SWMF boundary)
