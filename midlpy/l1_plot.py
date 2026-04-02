@@ -1,11 +1,10 @@
 """
 l1_plot.py
 ----------
-Plotting utilities for MIDLResult objects. Not part of the public library.
+Plotting utilities for MIDLResult objects.
 
 Usage:
-    from midlpy import midl
-    from l1_plot import plot_day, plot_propagation
+    from midlpy import midl, plot_day, plot_variable
 
     result = midl('2024-05-09', '2024-05-11')
     plot_day(result, '2024-05-10')

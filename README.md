@@ -40,20 +40,19 @@ result = midl('2024-05-09', '2024-05-11', raw_dir='L1_raw')
 
 `midl(start, end)` reads from `L1_raw/`, runs the full pipeline (despike, interpolate, propagate-to-reference, quality-score, source-select, combine, smooth, propagate-to-boundary), and returns a `MIDLResult`. No intermediate files needed.
 
-### Step 3: Save output (scripts, not part of library)
+### Step 3: Save output
 
 ```python
-# In scripts/ directory:
-from l1_writers import write_monthly_parquet, write_daily_dat
+from midlpy import write_monthly_parquet, write_daily_dat
 
 write_monthly_parquet(result, output_dir='L1_db/data')  # monthly Parquet for database
 write_daily_dat(result, output_dir='L1')                 # per-day .dat files
 ```
 
-### Plotting (scripts, not part of library)
+### Plotting
 
 ```python
-from l1_plot import plot_day, plot_variable
+from midlpy import plot_day, plot_variable
 
 plot_day(result, '2024-05-10')             # 8-var overview -> plots/
 plot_variable(result, 'Bz', '2024-05-10')  # single variable -> plots/
@@ -118,7 +117,7 @@ flowchart TD
         ST  --> SL
     end
 
-    L1C[/"L1/YYYY/MM/DD/  ·  L1_combined.dat\nnSat  —  number of quality-passing satellites contributing Ux each minute"/]
+    L1C[/"L1/YYYY/MM/DD/  ·  L1_combined.dat\nMerged unpropagated stream"/]
 
     subgraph PROP["l1_propagation.py  —  Ballistic Propagation"]
         BP["ballistic_propagation()\ntravel time  =  ΔX_GSM  /  Ux\ncausality-enforced monotone time mapping\nfrom x_ref  closest satellite position  to target boundary"]
@@ -139,9 +138,12 @@ flowchart TD
 
 | File | Role |
 |---|---|
-| `l1_pipeline.py` | Download, resample, coordinate rotation, and per-satellite raw/filtered `.dat` output |
-| `l1_combine.py` | Multi-satellite merge with quality gating, source selection, and propagation |
-| `l1_combine_T.py` | Temperature-specific combiner (see below) |
+| `l1_midl.py` | **Primary entry point**: `midl(start, end)` continuous pipeline, returns `MIDLResult` |
+| `l1_writers.py` | Output formatters: `write_monthly_parquet()`, `write_daily_dat()` |
+| `l1_plot.py` | Debugging plots: `plot_day()`, `plot_variable()` |
+| `l1_pipeline.py` | Download, resample, coordinate rotation, and per-satellite raw `.dat` output |
+| `l1_combine.py` | Quality scoring, source selection, and satellite merging logic |
+| `l1_combine_T.py` | Temperature-specific combiner (geometric median in log-space) |
 | `l1_quality.py` | Quality checks and `score_all_plasma()` |
 | `l1_filters.py` | `despike()`, `smooth_transitions()`, `median_filter_3()`, `interpolate_with_limits()` |
 | `l1_propagation.py` | Ballistic travel-time propagation with causality enforcement |
@@ -172,13 +174,9 @@ flowchart TD
 | `L1_dscovr.dat` | DSCOVR 1-min filtered stream (GSM) |
 | `L1_wind.dat` | WIND 1-min filtered stream (GSM) |
 | `L1_satpos.dat` | Noon GSM positions (Re) for all three satellites |
-| `L1_combined.dat` | Merged, quality-screened, unpropagated stream with `nSat` |
+| `L1_combined.dat` | Merged, quality-screened, unpropagated stream |
 | `IMF_14Re.dat` | Combined stream propagated to 14 Re |
 | `IMF_32Re.dat` | Combined stream propagated to 32 Re |
-
-`L1_combined.dat` metadata:
-
-- `nSat`: number of satellites contributing valid plasma for `Ux` at that minute
 
 Column layout is compatible with SWMF/BATS-R-US upstream input readers.
 

@@ -1,11 +1,10 @@
 """
 l1_writers.py
 -------------
-Output formatters for MIDLResult objects. Not part of the public library.
+Output formatters for MIDLResult objects.
 
 Usage:
-    from midlpy import midl
-    from l1_writers import write_monthly_parquet, write_daily_dat
+    from midlpy import midl, write_monthly_parquet, write_daily_dat
 
     result = midl('2024-05-09', '2024-05-11')
     write_monthly_parquet(result, output_dir='L1_db/data')
