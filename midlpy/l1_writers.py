@@ -59,6 +59,38 @@ def write_monthly_parquet(result, output_dir, targets=None):
 
         print(f'Wrote {len(df.groupby("_ym"))} monthly files to {sub_dir}/')
 
+    # Write reference position alongside unpropagated data.
+    if result.ref_x_re and (not targets or 'unpropagated' in targets):
+        write_ref_position_parquet(result, output_dir)
+
+
+def write_ref_position_parquet(result, output_dir):
+    """Write reference satellite X_GSM position to a single Parquet file.
+
+    Creates:
+        output_dir/unpropagated/ref_position.parquet
+
+    Columns: date (datetime64), X_GSM_Re (float64).
+
+    Parameters
+    ----------
+    result : MIDLResult
+    output_dir : str
+    """
+    if not result.ref_x_re:
+        return
+
+    df = pd.DataFrame([
+        {'date': pd.Timestamp(date), 'X_GSM_Re': x_re}
+        for date, x_re in sorted(result.ref_x_re.items())
+    ])
+
+    sub_dir = os.path.join(output_dir, 'unpropagated')
+    os.makedirs(sub_dir, exist_ok=True)
+    path = os.path.join(sub_dir, 'ref_position.parquet')
+    df.to_parquet(path, engine='pyarrow', index=False)
+    print(f'Wrote reference positions to {path}')
+
 
 def write_daily_dat(result, output_dir='L1'):
     """Write MIDLResult to per-day .dat files (backward compatible).

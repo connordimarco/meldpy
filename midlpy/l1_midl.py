@@ -38,9 +38,13 @@ class MIDLResult:
     propagated : dict[int, pd.DataFrame]
         Ballistically propagated data keyed by boundary distance in Re.
         Default keys: 14, 32. Same columns as unpropagated.
+    ref_x_re : dict[datetime.date, float]
+        X_GSM position (in Earth radii) of the reference satellite for each
+        calendar day.  The reference satellite is the one closest to Earth.
     """
     unpropagated: pd.DataFrame
     propagated: dict
+    ref_x_re: dict
 
 
 # ---------------------------------------------------------------------------
@@ -273,6 +277,7 @@ def midl(start, end, raw_dir='L1_raw', boundaries_re=(14, 32)):
         return MIDLResult(
             unpropagated=empty,
             propagated={b: empty.copy() for b in boundaries_re},
+            ref_x_re={},
         )
 
     # Stage 1: Despike.
@@ -342,8 +347,12 @@ def midl(start, end, raw_dir='L1_raw', boundaries_re=(14, 32)):
                      (df_prop.index < result_end))
         result_propagated[b_re] = df_prop.loc[prop_mask].copy()
 
+    # Convert reference positions from km back to Re.
+    ref_x_re = {date: x_km / 6371.0 for date, x_km in ref_x_daily.items()}
+
     print('Done.')
     return MIDLResult(
         unpropagated=df_combined.loc[mask].copy(),
         propagated=result_propagated,
+        ref_x_re=ref_x_re,
     )
