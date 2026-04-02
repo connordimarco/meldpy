@@ -102,15 +102,16 @@ def _read_sat_positions(pos_file):
     return result
 
 
-def _load_positions_range(pos_dir, start, end):
+def _load_positions_range(raw_dir, start, end):
     """Load satellite positions for [start, end] into a dict indexed by date.
 
+    Reads L1_satpos.dat from the same raw_dir tree as the satellite data.
     Returns dict: {date -> {'ace': x_km, 'dscovr': x_km, 'wind': x_km}}.
     """
     positions = {}
     for day_str in _day_range(start, end):
         dt = datetime.strptime(day_str, '%Y-%m-%d')
-        pos_file = os.path.join(pos_dir, dt.strftime('%Y/%m/%d'),
+        pos_file = os.path.join(raw_dir, dt.strftime('%Y/%m/%d'),
                                 'L1_satpos.dat')
         positions[dt.date()] = _read_sat_positions(pos_file)
     return positions
@@ -232,13 +233,13 @@ def _propagate_to_boundary(df_combined, ref_x_daily, target_km):
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def midl(start, end, raw_dir='L1_raw', pos_dir='L1_positions',
-         boundaries_re=(14, 32)):
+def midl(start, end, raw_dir='L1_raw', boundaries_re=(14, 32)):
     """Process L1 solar wind data for [start, end].
 
-    Reads raw satellite data from L1_raw/, applies the full pipeline
-    (despike, interpolate, propagate-to-reference, quality-score,
-    source-select, combine, smooth, propagate-to-boundary), and returns
+    Reads raw satellite data and position files from raw_dir/, applies
+    the full pipeline (despike, interpolate, propagate-to-reference,
+    quality-score, source-select, combine, smooth, propagate-to-boundary),
+    and returns
     a MIDLResult.
 
     Parameters
@@ -246,9 +247,8 @@ def midl(start, end, raw_dir='L1_raw', pos_dir='L1_positions',
     start, end : str or pd.Timestamp
         Date range to process (inclusive), e.g. '2024-05-09', '2024-05-11'.
     raw_dir : str
-        Path to L1_raw/ directory tree.
-    pos_dir : str
-        Path to directory containing L1_satpos.dat files (usually L1/).
+        Path to directory tree containing per-day satellite data and
+        L1_satpos.dat files (raw_dir/YYYY/MM/DD/).
     boundaries_re : tuple of int
         Propagation target distances in Earth radii. Default (14, 32).
 
@@ -287,7 +287,7 @@ def midl(start, end, raw_dir='L1_raw', pos_dir='L1_positions',
 
     # Stage 3: Propagate to reference position.
     print('Propagating to reference positions...')
-    positions = _load_positions_range(pos_dir, load_start, load_end)
+    positions = _load_positions_range(raw_dir, load_start, load_end)
     ref_x_daily = _propagate_to_reference(data_map, positions)
 
     # Build master grid spanning the full padded window.

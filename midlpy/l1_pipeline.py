@@ -360,23 +360,20 @@ def process_raw_to_filtered(sat_name, day, raw_base='L1_raw', out_base='L1'):
 _SENTINEL_NAME = '.download_complete'
 
 
-def download_day(day, cda, raw_dir='L1_raw', pos_dir='L1_positions'):
+def download_day(day, cda, raw_dir='L1_raw'):
     """Phase 1: download raw data for all satellites and write to raw_dir/.
 
     Checks for a sentinel file to skip entirely on re-runs.  Per-satellite
     checks avoid re-downloading satellites whose raw file already exists.
-    Also creates the position file (requires CDF downloads).
+    Also creates the position file in the same directory.
 
     Parameters
     ----------
     day : str  ('YYYY-MM-DD')
     cda : pyspedas.CDAWeb
     raw_dir : str
-        Root of the raw data directory tree. Files are written to
-        raw_dir/YYYY/MM/DD/L1_<sat>.dat.
-    pos_dir : str
-        Root of the directory for satellite position files. Written to
-        pos_dir/YYYY/MM/DD/L1_satpos.dat.
+        Root of the data directory tree. All files (per-satellite .dat
+        and L1_satpos.dat) are written to raw_dir/YYYY/MM/DD/.
     """
     dt = datetime.strptime(day, '%Y-%m-%d')
     day_raw_dir = os.path.join(raw_dir, dt.strftime('%Y/%m/%d'))
@@ -436,7 +433,7 @@ def download_day(day, cda, raw_dir='L1_raw', pos_dir='L1_positions'):
                           raw_base=raw_dir)
 
     # Position file (always recreate -- cheap and needed by combine step).
-    create_position_file(day, cda, pos_dir=pos_dir)
+    create_position_file(day, cda, pos_dir=raw_dir)
 
     # Write sentinel so future runs skip this day entirely.
     os.makedirs(day_raw_dir, exist_ok=True)
@@ -474,7 +471,7 @@ def get_one_day_swmf_input(day, cda):
     process_day(day)
 
 
-def create_position_file(day, cda, cleanup_cdfs=True, pos_dir='L1_positions'):
+def create_position_file(day, cda, cleanup_cdfs=True, pos_dir='L1_raw'):
     """Write L1_satpos.dat containing mean noon GSM positions for all three satellites.
 
     Downloads a narrow 11:00-13:00 UT window of orbit data, averages the
