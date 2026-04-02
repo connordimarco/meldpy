@@ -52,6 +52,7 @@ def write_monthly_parquet(result, output_dir, targets=None):
 
         for period, group in df.groupby('_ym'):
             group = group.drop(columns='_ym')
+            group.index.name = 'timestamp'
             fname = f'IMF_{period.year:04d}_{period.month:02d}.parquet'
             path = os.path.join(sub_dir, fname)
             group.to_parquet(path, engine='pyarrow')

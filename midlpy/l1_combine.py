@@ -239,12 +239,15 @@ def _read_sat_positions(pos_file):
 
 def combine_data_priority(data_map, master_grid):
     # Align each satellite to the same timeline before merging.
-    df_ace = data_map.get('ace', pd.DataFrame(
-        index=master_grid)).reindex(master_grid)
-    df_dsc = data_map.get('dscovr', pd.DataFrame(
-        index=master_grid)).reindex(master_grid)
-    df_win = data_map.get('wind', pd.DataFrame(
-        index=master_grid)).reindex(master_grid)
+    def _dedup_and_reindex(df, grid):
+        return df.reindex(grid)
+
+    df_ace = _dedup_and_reindex(
+        data_map.get('ace', pd.DataFrame(index=master_grid)), master_grid)
+    df_dsc = _dedup_and_reindex(
+        data_map.get('dscovr', pd.DataFrame(index=master_grid)), master_grid)
+    df_win = _dedup_and_reindex(
+        data_map.get('wind', pd.DataFrame(index=master_grid)), master_grid)
 
     # --- Run quality scorer across all three satellites ---
     print('  Running plasma quality assessment for all satellites...')

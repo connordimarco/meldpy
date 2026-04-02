@@ -85,6 +85,32 @@ def _slice_day(df, day_str):
     return df.loc[(df.index >= day_start) & (df.index < day_end)]
 
 
+def _load_day_from_parquet(parquet_dir, day_str):
+    """Load one day's data from monthly Parquet files.
+
+    Returns (df_unpropagated, {b_re: df_propagated}).
+    """
+    dt = pd.Timestamp(day_str)
+    fname = f'IMF_{dt.year:04d}_{dt.month:02d}.parquet'
+
+    datasets = {}
+    for subdir in os.listdir(parquet_dir):
+        path = os.path.join(parquet_dir, subdir, fname)
+        if not os.path.exists(path):
+            continue
+        df = pd.read_parquet(path)
+        datasets[subdir] = _slice_day(df, day_str)
+
+    df_comb = datasets.pop('unpropagated', pd.DataFrame())
+    prop_dfs = {}
+    for key, df in datasets.items():
+        # e.g. '14re' -> 14
+        b_re = int(key.replace('re', ''))
+        prop_dfs[b_re] = df
+
+    return df_comb, prop_dfs
+
+
 # ---------------------------------------------------------------------------
 # Public plotting functions
 # ---------------------------------------------------------------------------
@@ -208,6 +234,84 @@ def plot_variable(result, var, day_str, output_dir='plots'):
     os.makedirs(output_dir, exist_ok=True)
     out_path = os.path.join(output_dir,
                             f'{day_str.replace("-", "_")}_{var}.png')
+    fig.savefig(out_path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    print(f'Saved {out_path}')
+
+
+def plot_day_from_parquet(parquet_dir, day_str, output_dir='plots'):
+    """Plot one day by reading directly from monthly Parquet files.
+
+    Same layout as plot_day() but doesn't require a MIDLResult.
+
+    Parameters
+    ----------
+    parquet_dir : str
+        Path to Parquet directory (e.g. 'MIDL_db/data') containing
+        unpropagated/, 14re/, 32re/ subdirectories.
+    day_str : str
+        Day to plot, e.g. '2024-05-10'.
+    output_dir : str
+        Directory for output PNG.
+    """
+    df_comb, prop_dfs = _load_day_from_parquet(parquet_dir, day_str)
+
+    if df_comb.empty and not prop_dfs:
+        print(f'  No data for {day_str}, skipping plot.')
+        return
+
+    n_rows = len(VARIABLES)
+    n_cols = 1 + len(prop_dfs)
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(6 * n_cols, 2.2 * n_rows),
+                             sharex=True)
+    if n_cols == 1:
+        axes = axes.reshape(-1, 1)
+
+    col_titles = ['Combined (unpropagated)'] + [
+        f'Propagated to {b} Re' for b in sorted(prop_dfs.keys())]
+
+    for row_idx, var in enumerate(VARIABLES):
+        label, unit = VAR_LABELS[var]
+        log_scale = (var == 'T')
+        series_list = []
+
+        ax = axes[row_idx, 0]
+        if var in df_comb.columns:
+            ax.plot(df_comb.index, df_comb[var], **COMBINED_STYLE)
+            series_list.append(df_comb[var])
+        ax.set_ylabel(f'{label} ({unit})', fontsize=8)
+
+        for col_idx, b_re in enumerate(sorted(prop_dfs.keys()), start=1):
+            ax = axes[row_idx, col_idx]
+            df_p = prop_dfs[b_re]
+            style = PROP_STYLES.get(b_re, {'color': 'gray', 'ls': '-', 'lw': 0.9})
+            if var in df_p.columns:
+                ax.plot(df_p.index, df_p[var], color=style['color'],
+                        ls='-', lw=style['lw'])
+                series_list.append(df_p[var])
+
+        row_axes = [axes[row_idx, c] for c in range(n_cols)]
+        if series_list:
+            _set_shared_ylim(row_axes, series_list, log_scale=log_scale)
+
+        for ax in row_axes:
+            ax.tick_params(labelsize=7)
+            ax.grid(True, lw=0.3, alpha=0.5)
+            if not log_scale and var != 'T':
+                ax.axhline(0, color='k', lw=0.3, alpha=0.3)
+
+    for col_idx, title in enumerate(col_titles):
+        axes[0, col_idx].set_title(title, fontsize=9)
+
+    for col_idx in range(n_cols):
+        _fmt_xaxis(axes[-1, col_idx])
+
+    fig.suptitle(day_str, fontsize=12, y=1.0)
+    fig.tight_layout()
+
+    os.makedirs(output_dir, exist_ok=True)
+    out_path = os.path.join(output_dir,
+                            day_str.replace('-', '_') + '.png')
     fig.savefig(out_path, dpi=150, bbox_inches='tight')
     plt.close(fig)
     print(f'Saved {out_path}')

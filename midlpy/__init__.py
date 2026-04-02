@@ -25,7 +25,7 @@ plot_variable(result, var, day_str, output_dir)
 
 from .l1_midl import midl, MIDLResult
 from .l1_writers import write_monthly_parquet, write_daily_dat
-from .l1_plot import plot_day, plot_variable
+from .l1_plot import plot_day, plot_variable, plot_day_from_parquet
 from .l1_pipeline import download_day, process_day, get_one_day_swmf_input
 from .l1_combine import create_combined_l1_files
 
@@ -36,6 +36,7 @@ __all__ = [
     'write_daily_dat',
     'plot_day',
     'plot_variable',
+    'plot_day_from_parquet',
     'download_day',
     'process_day',
     'create_combined_l1_files',

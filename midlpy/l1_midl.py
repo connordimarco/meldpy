@@ -290,6 +290,14 @@ def midl(start, end, raw_dir='L1_raw', boundaries_re=(14, 32)):
     positions = _load_positions_range(raw_dir, load_start, load_end)
     ref_x_daily = _propagate_to_reference(data_map, positions)
 
+    # Deduplicate after propagation — time-shifting can create collisions at
+    # day boundaries. Keep the fastest parcel (most negative Ux) per minute.
+    for sat in data_map:
+        df = data_map[sat]
+        if df.index.duplicated().any():
+            df = df.sort_values('Ux', ascending=True)
+            data_map[sat] = df[~df.index.duplicated(keep='first')]
+
     # Build master grid spanning the full padded window.
     grid_start = load_start
     grid_end = load_end + pd.Timedelta(days=1)
