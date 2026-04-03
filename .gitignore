@@ -5,9 +5,6 @@ cdf_temp/
 L1/
 L1_raw/
 
-# Developer Work
-scratch/
-
 # Claude Code 
 .claude/
 CLAUDE.md
@@ -23,3 +20,6 @@ build/
 
 # log files
 *.log
+
+# Developer Files 
+dev/

@@ -85,28 +85,31 @@ def _slice_day(df, day_str):
     return df.loc[(df.index >= day_start) & (df.index < day_end)]
 
 
-def _load_day_from_parquet(parquet_dir, day_str):
-    """Load one day's data from monthly Parquet files.
+def _load_day_from_csv(data_dir, day_str):
+    """Load one day's data from monthly CSV files.
+
+    Reads from data_dir/YYYY/MM/csv/{unpropagated,14Re,32Re}.csv
 
     Returns (df_unpropagated, {b_re: df_propagated}).
     """
     dt = pd.Timestamp(day_str)
-    fname = f'IMF_{dt.year:04d}_{dt.month:02d}.parquet'
+    csv_dir = os.path.join(data_dir, f'{dt.year:04d}', f'{dt.month:02d}', 'csv')
 
-    datasets = {}
-    for subdir in os.listdir(parquet_dir):
-        path = os.path.join(parquet_dir, subdir, fname)
+    df_comb = pd.DataFrame()
+    prop_dfs = {}
+
+    for fname in ('unpropagated', '14Re', '32Re'):
+        path = os.path.join(csv_dir, f'{fname}.csv')
         if not os.path.exists(path):
             continue
-        df = pd.read_parquet(path)
-        datasets[subdir] = _slice_day(df, day_str)
+        df = pd.read_csv(path, index_col='timestamp', parse_dates=True)
+        df = _slice_day(df, day_str)
 
-    df_comb = datasets.pop('unpropagated', pd.DataFrame())
-    prop_dfs = {}
-    for key, df in datasets.items():
-        # e.g. '14re' -> 14
-        b_re = int(key.replace('re', ''))
-        prop_dfs[b_re] = df
+        if fname == 'unpropagated':
+            df_comb = df
+        else:
+            b_re = int(fname.replace('Re', ''))
+            prop_dfs[b_re] = df
 
     return df_comb, prop_dfs
 
@@ -149,7 +152,7 @@ def plot_day(result, day_str, output_dir='plots'):
         # Column 0: combined.
         ax = axes[row_idx, 0]
         if var in df_comb.columns:
-            ax.plot(df_comb.index, df_comb[var], **COMBINED_STYLE)
+            ax.plot(df_comb.index.to_numpy(), df_comb[var].to_numpy(), **COMBINED_STYLE)
             series_list.append(df_comb[var])
         ax.set_ylabel(f'{label} ({unit})', fontsize=8)
 
@@ -159,7 +162,7 @@ def plot_day(result, day_str, output_dir='plots'):
             df_p = prop_dfs[b_re]
             style = PROP_STYLES.get(b_re, {'color': 'gray', 'ls': '-', 'lw': 0.9})
             if var in df_p.columns:
-                ax.plot(df_p.index, df_p[var], color=style['color'],
+                ax.plot(df_p.index.to_numpy(), df_p[var].to_numpy(), color=style['color'],
                         ls='-', lw=style['lw'])
                 series_list.append(df_p[var])
 
@@ -210,14 +213,14 @@ def plot_variable(result, var, day_str, output_dir='plots'):
     label, unit = VAR_LABELS.get(var, (var, ''))
 
     if var in df_comb.columns:
-        ax.plot(df_comb.index, df_comb[var], label='Combined',
+        ax.plot(df_comb.index.to_numpy(), df_comb[var].to_numpy(), label='Combined',
                 **COMBINED_STYLE)
 
     for b_re in sorted(result.propagated.keys()):
         df_p = _slice_day(result.propagated[b_re], day_str)
         style = PROP_STYLES.get(b_re, {'color': 'gray', 'ls': '-', 'lw': 0.9})
         if var in df_p.columns:
-            ax.plot(df_p.index, df_p[var],
+            ax.plot(df_p.index.to_numpy(), df_p[var].to_numpy(),
                     label=style.get('label', f'{b_re} Re'),
                     color=style['color'], ls=style['ls'], lw=style['lw'])
 
@@ -239,71 +242,90 @@ def plot_variable(result, var, day_str, output_dir='plots'):
     print(f'Saved {out_path}')
 
 
-def plot_day_from_parquet(parquet_dir, day_str, output_dir='plots'):
-    """Plot one day by reading directly from monthly Parquet files.
-
-    Same layout as plot_day() but doesn't require a MIDLResult.
+def plot_day_from_csv(data_dir, day_str, output_dir='plots',
+                      raw_dir='L1_raw'):
+    """Plot one day: left column = per-satellite raw, right column = combined.
 
     Parameters
     ----------
-    parquet_dir : str
-        Path to Parquet directory (e.g. 'MIDL_db/data') containing
-        unpropagated/, 14re/, 32re/ subdirectories.
+    data_dir : str
+        Path to data directory (e.g. 'data') containing YYYY/MM/csv/ files.
     day_str : str
         Day to plot, e.g. '2024-05-10'.
     output_dir : str
         Directory for output PNG.
+    raw_dir : str
+        Path to L1_raw directory with per-satellite .dat files.
     """
-    df_comb, prop_dfs = _load_day_from_parquet(parquet_dir, day_str)
+    from .l1_readers import read_l1_data
 
-    if df_comb.empty and not prop_dfs:
+    df_comb, _ = _load_day_from_csv(data_dir, day_str)
+
+    # Load per-satellite raw data for this day.
+    dt = pd.Timestamp(day_str)
+    day_path = os.path.join(raw_dir, dt.strftime('%Y/%m/%d'))
+    sat_dfs = {}
+    for sat in ('ace', 'dscovr', 'wind'):
+        fpath = os.path.join(day_path, f'L1_{sat}.dat')
+        df = read_l1_data(fpath)
+        if not df.empty:
+            sat_dfs[sat] = _slice_day(df, day_str)
+
+    if df_comb.empty and not sat_dfs:
         print(f'  No data for {day_str}, skipping plot.')
         return
 
     n_rows = len(VARIABLES)
-    n_cols = 1 + len(prop_dfs)
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(6 * n_cols, 2.2 * n_rows),
+    fig, axes = plt.subplots(n_rows, 2, figsize=(12, 2.2 * n_rows),
                              sharex=True)
-    if n_cols == 1:
-        axes = axes.reshape(-1, 1)
-
-    col_titles = ['Combined (unpropagated)'] + [
-        f'Propagated to {b} Re' for b in sorted(prop_dfs.keys())]
 
     for row_idx, var in enumerate(VARIABLES):
         label, unit = VAR_LABELS[var]
         log_scale = (var == 'T')
         series_list = []
 
-        ax = axes[row_idx, 0]
-        if var in df_comb.columns:
-            ax.plot(df_comb.index, df_comb[var], **COMBINED_STYLE)
+        # Left column: per-satellite raw data (overlaid).
+        ax_left = axes[row_idx, 0]
+        for sat in ('ace', 'dscovr', 'wind'):
+            if sat in sat_dfs and var in sat_dfs[sat].columns:
+                color, sat_label = SAT_COLORS[sat]
+                df_s = sat_dfs[sat]
+                ax_left.plot(df_s.index.to_numpy(), df_s[var].to_numpy(),
+                             color=color, lw=0.6, alpha=0.8)
+                series_list.append(df_s[var])
+        ax_left.set_ylabel(f'{label} ({unit})', fontsize=8)
+
+        # Right column: MIDL combined.
+        ax_right = axes[row_idx, 1]
+        if not df_comb.empty and var in df_comb.columns:
+            ax_right.plot(df_comb.index.to_numpy(), df_comb[var].to_numpy(),
+                          **COMBINED_STYLE)
             series_list.append(df_comb[var])
-        ax.set_ylabel(f'{label} ({unit})', fontsize=8)
 
-        for col_idx, b_re in enumerate(sorted(prop_dfs.keys()), start=1):
-            ax = axes[row_idx, col_idx]
-            df_p = prop_dfs[b_re]
-            style = PROP_STYLES.get(b_re, {'color': 'gray', 'ls': '-', 'lw': 0.9})
-            if var in df_p.columns:
-                ax.plot(df_p.index, df_p[var], color=style['color'],
-                        ls='-', lw=style['lw'])
-                series_list.append(df_p[var])
-
-        row_axes = [axes[row_idx, c] for c in range(n_cols)]
+        # Shared y limits and formatting.
         if series_list:
-            _set_shared_ylim(row_axes, series_list, log_scale=log_scale)
+            _set_shared_ylim([ax_left, ax_right], series_list,
+                             log_scale=log_scale)
 
-        for ax in row_axes:
+        for ax in (ax_left, ax_right):
             ax.tick_params(labelsize=7)
             ax.grid(True, lw=0.3, alpha=0.5)
             if not log_scale and var != 'T':
                 ax.axhline(0, color='k', lw=0.3, alpha=0.3)
 
-    for col_idx, title in enumerate(col_titles):
-        axes[0, col_idx].set_title(title, fontsize=9)
+    # Column titles.
+    axes[0, 0].set_title('ACE / DSCOVR / WIND', fontsize=9)
+    axes[0, 1].set_title('MIDL Combined', fontsize=9)
 
-    for col_idx in range(n_cols):
+    # Legend on top-left panel.
+    legend_handles = [Line2D([0], [0], color=SAT_COLORS[s][0], lw=1.0,
+                             label=SAT_COLORS[s][1])
+                      for s in ('ace', 'dscovr', 'wind')]
+    axes[0, 0].legend(handles=legend_handles, fontsize=7, loc='upper right',
+                      ncol=3)
+
+    # Format x-axis on bottom row.
+    for col_idx in range(2):
         _fmt_xaxis(axes[-1, col_idx])
 
     fig.suptitle(day_str, fontsize=12, y=1.0)

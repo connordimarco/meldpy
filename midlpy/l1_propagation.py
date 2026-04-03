@@ -30,8 +30,9 @@ def ballistic_propagation(orbit, raw_data, target_x_km=90000):
     Returns
     -------
     pd.DataFrame
-        Copy of *raw_data* re-indexed to arrival times at *target_x_km*,
-        resampled to 1-minute cadence.
+        Propagated data on a complete 1-minute grid matching the input
+        time range.  Arrival times are computed exactly (no rounding),
+        then interpolated onto the regular grid so no minutes are dropped.
     """
     # Work on a copy so callers keep original data.
     input_df = raw_data.copy()
@@ -54,14 +55,20 @@ def ballistic_propagation(orbit, raw_data, target_x_km=90000):
 
     # Drop older parcels overtaken by faster later parcels.
     input_df = input_df.loc[valid_mask]
-    # Snap arrivals to minute cadence used by downstream files.
-    input_df['propagated_time'] = arrivals[valid_mask].round('min')
-    # If multiple parcels land in the same minute, keep the fastest one.
-    input_df = input_df.sort_values(
-        by=['propagated_time', 'Vx Velocity, km/s, GSE'], ascending=[True, True])
-    input_df = input_df.drop_duplicates(
-        subset=['propagated_time'], keep='first')
-    input_df.index = input_df['propagated_time']
-    input_df = input_df.drop(columns=['propagated_time'])
+    input_df.index = arrivals[valid_mask]
 
-    return input_df
+    # Resample onto a regular 1-minute grid.  Arrival times are irregular
+    # (not aligned to whole minutes), so we merge them with the target grid
+    # and interpolate to produce a gap-free output.
+    numeric_cols = input_df.select_dtypes(include='number').columns
+    input_df = input_df[numeric_cols]
+    input_df = input_df[input_df.index.notna()]
+    input_df = input_df[~input_df.index.duplicated(keep='first')]
+    input_df = input_df.sort_index()
+
+    grid = pd.date_range(raw_data.index.min(), raw_data.index.max(), freq='T')
+    combined = input_df.index.union(grid)
+    result = input_df.reindex(combined).interpolate(
+        method='index').reindex(grid)
+
+    return result
