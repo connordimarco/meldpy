@@ -3,10 +3,9 @@ l1_writers.py
 -------------
 Output formatters for MIDLResult objects.
 
-Writes monthly CSV, DAT, and NetCDF files to:
+Writes monthly CSV and DAT files to:
     output_dir/YYYY/MM/csv/{unpropagated,14Re,32Re}.csv
     output_dir/YYYY/MM/dat/{unpropagated,14Re,32Re}.dat
-    output_dir/YYYY/MM/netcdf/{unpropagated,14Re,32Re}.nc
 
 Usage:
     from midlpy import midl, write_monthly_outputs
@@ -16,16 +15,14 @@ Usage:
 """
 import os
 
-import netCDF4
-import numpy as np
 import pandas as pd
 
 
 def write_monthly_outputs(result, output_dir='data'):
-    """Write MIDLResult to monthly CSV, DAT, and NetCDF files.
+    """Write MIDLResult to monthly CSV and DAT files.
 
     Creates directory structure:
-        output_dir/YYYY/MM/{csv,dat,netcdf}/{unpropagated,14Re,32Re}.*
+        output_dir/YYYY/MM/{csv,dat}/{unpropagated,14Re,32Re}.*
 
     For unpropagated data, an X_Re column is added containing the X_GSM
     distance (in Earth radii) of the reference satellite for each day.
@@ -54,7 +51,6 @@ def write_monthly_outputs(result, output_dir='data'):
 
             _write_csv(group, label, year_month_dir)
             _write_dat(group, label, year_month_dir)
-            _write_netcdf(group, label, year_month_dir)
             n_months += 1
 
         print(f'Wrote {n_months} monthly files for {label} to {output_dir}/')
@@ -154,39 +150,3 @@ def _write_dat(df, label, year_month_dir):
         f.write('\n'.join(lines))
         f.write('\n')
 
-
-# ---------------------------------------------------------------------------
-# NetCDF4
-# ---------------------------------------------------------------------------
-
-def _write_netcdf(df, label, year_month_dir):
-    """Write one monthly NetCDF4 file."""
-    out_dir = os.path.join(year_month_dir, 'netcdf')
-    os.makedirs(out_dir, exist_ok=True)
-    path = os.path.join(out_dir, f'{label}.nc')
-
-    time_units = 'minutes since 2005-01-01 00:00:00'
-    times = netCDF4.date2num(df.index.to_pydatetime(), units=time_units)
-
-    with netCDF4.Dataset(path, 'w', format='NETCDF4') as ds:
-        ds.title = f'MIDL {label} solar wind data'
-        ds.source = 'MIDLPy pipeline (ACE, DSCOVR, WIND)'
-        ds.Conventions = 'CF-1.8'
-
-        ds.createDimension('time', None)
-
-        t_var = ds.createVariable('time', 'f8', ('time',))
-        t_var.units = time_units
-        t_var.calendar = 'standard'
-        t_var[:] = times
-
-        var_units = {
-            'Bx': 'nT', 'By': 'nT', 'Bz': 'nT',
-            'Ux': 'km/s', 'Uy': 'km/s', 'Uz': 'km/s',
-            'rho': 'cm^-3', 'T': 'K', 'X_Re': 'Re',
-        }
-
-        for col in df.columns:
-            v = ds.createVariable(col, 'f8', ('time',), fill_value=np.nan)
-            v.units = var_units.get(col, '')
-            v[:] = df[col].values

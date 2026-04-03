@@ -43,19 +43,19 @@ result = midl('2024-05-09', '2024-05-11', raw_dir='L1_raw')
 ### Step 3: Save output
 
 ```python
-from midlpy import write_monthly_parquet, write_daily_dat
+from midlpy import write_monthly_outputs
 
-write_monthly_parquet(result, output_dir='L1_db/data')  # monthly Parquet for database
-write_daily_dat(result, output_dir='L1')                 # per-day .dat files
+write_monthly_outputs(result, output_dir='data')  # monthly CSV and DAT files
 ```
 
 ### Plotting
 
 ```python
-from midlpy import plot_day, plot_variable
+from midlpy import plot_day, plot_variable, plot_day_from_csv
 
 plot_day(result, '2024-05-10')             # 8-var overview -> plots/
 plot_variable(result, 'Bz', '2024-05-10')  # single variable -> plots/
+plot_day_from_csv('data', '2024-05-10')    # plot from saved CSV, no MIDLResult needed
 ```
 
 ---
@@ -139,7 +139,7 @@ flowchart TD
 | File | Role |
 |---|---|
 | `l1_midl.py` | **Primary entry point**: `midl(start, end)` continuous pipeline, returns `MIDLResult` |
-| `l1_writers.py` | Output formatters: `write_monthly_parquet()`, `write_daily_dat()` |
+| `l1_writers.py` | Output formatters: `write_monthly_outputs()` (CSV + DAT) |
 | `l1_plot.py` | Debugging plots: `plot_day()`, `plot_variable()` |
 | `l1_pipeline.py` | Download, resample, coordinate rotation, and per-satellite raw `.dat` output |
 | `l1_combine.py` | Quality scoring, source selection, and satellite merging logic |

@@ -14,7 +14,7 @@ midl(start, end, raw_dir)
 download_day(day, cda, raw_dir)
     Download raw satellite data to raw_dir/.
 write_monthly_outputs(result, output_dir)
-    Write MIDLResult to monthly CSV, DAT, and NetCDF files.
+    Write MIDLResult to monthly CSV and DAT files.
 plot_day(result, day_str, output_dir)
     Plot all variables for one day.
 plot_variable(result, var, day_str, output_dir)
