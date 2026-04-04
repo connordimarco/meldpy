@@ -88,10 +88,9 @@ flowchart TD
 
         subgraph QC["score_all_plasma()  ·  l1_quality.py  —  plasma only: Ux  Uy  Uz  rho"]
             Q1["① Outlier detection\nflag odd-one-out when the other two satellites agree\npairwise rolling median  ·  per-variable absolute or ratio threshold"]
-            Q2["② Physical range check\nreject implausible values\nUx: −2500 to −150 km/s  ·  rho: 0.1 – 100 cm⁻³\nUy  Uz: ±200 km/s"]
-            Q3["③ NaN-fraction check\nflag windows where >50% of points are missing\n60-minute rolling window"]
-            Q4["④ Flat-plateau detection\nflag stuck or near-constant instrument readings\nrolling std ≤ threshold  AND  unique-value count ≤ 3"]
-            Q5["⑤ Near-zero Uy/Uz  —  DSCOVR only\nFaraday-cup transverse-velocity artifact\n|Uy| or |Uz| ≤ 0.5 km/s while non-NaN"]
+            Q3["② NaN-fraction check\nflag windows where >50% of points are missing\n60-minute rolling window"]
+            Q4["③ Flat-plateau detection\nflag stuck or near-constant instrument readings\nrolling std ≤ threshold  AND  unique-value count ≤ 3"]
+            Q5["④ Near-zero Uy/Uz  —  DSCOVR only\nFaraday-cup transverse-velocity artifact\n|Uy| or |Uz| ≤ 0.5 km/s while non-NaN"]
         end
 
         VS["Satellite source selection\nB: coupled via |B| magnitude  all 3 components from same satellite\nUy  Uz: coupled via |Vt|  both from same satellite\nUx  rho: selected independently\nPlasma: quality bad-masks applied before selection\nMagnetic field: bypasses quality gate\n3 satellites agree within threshold  →  median of all three\n2 satellites agree within threshold  →  mean of closest agreeing pair\nNone agree  →  fallback: closest to previous output  WIND at startup\n  locked source switches only after 3 consecutive minutes of preference"]
@@ -111,7 +110,7 @@ flowchart TD
         GF  --> PR
         PR  --> QC
         PR  --> T1
-        Q1 & Q2 & Q3 & Q4 & Q5 --> VS
+        Q1 & Q3 & Q4 & Q5 --> VS
         VS  --> ST
         T4  --> ST
         ST  --> SL
@@ -164,19 +163,15 @@ flowchart TD
 | `L1_dscovr.dat` | DSCOVR 1-min stream before filtering |
 | `L1_wind.dat` | WIND 1-min stream before filtering |
 
-### Filtered + combined output
+### Monthly pipeline output
 
-`L1/YYYY/MM/DD/`
+`data/YYYY/MM/{csv,dat}/`
 
 | File | Description |
 |---|---|
-| `L1_ace.dat` | ACE 1-min filtered stream (GSM) |
-| `L1_dscovr.dat` | DSCOVR 1-min filtered stream (GSM) |
-| `L1_wind.dat` | WIND 1-min filtered stream (GSM) |
-| `L1_satpos.dat` | Noon GSM positions (Re) for all three satellites |
-| `L1_combined.dat` | Merged, quality-screened, unpropagated stream |
-| `IMF_14Re.dat` | Combined stream propagated to 14 Re |
-| `IMF_32Re.dat` | Combined stream propagated to 32 Re |
+| `YYYYMM_unpropagated.{csv,dat}` | Merged stream at reference satellite position. Includes `X_Re` and source provenance columns (`B_source`, `Ux_source`, `Uyz_source`, `rho_source`, `T_source`). Source values are satellite codes: 1=ACE, 2=DSCOVR, 3=WIND, concatenated (e.g. `13` = ACE+WIND). |
+| `YYYYMM_14Re.{csv,dat}` | Combined stream propagated to 14 Re |
+| `YYYYMM_32Re.{csv,dat}` | Combined stream propagated to 32 Re |
 
 Column layout is compatible with SWMF/BATS-R-US upstream input readers.
 

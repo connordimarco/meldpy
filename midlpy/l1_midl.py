@@ -41,10 +41,15 @@ class MIDLResult:
     ref_x_re : dict[datetime.date, float]
         X_GSM position (in Earth radii) of the reference satellite for each
         calendar day.  The reference satellite is the one closest to Earth.
+    source_map : dict[str, pd.Series]
+        Per-variable source provenance. Each Series contains frozenset of
+        satellite codes (1=ACE, 2=DSCOVR, 3=WIND) at each minute.
+        Keys: Bx, By, Bz, Ux, Uy, Uz, rho, T.
     """
     unpropagated: pd.DataFrame
     propagated: dict
     ref_x_re: dict
+    source_map: dict
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +208,12 @@ def _compute_source_changed(source_map):
 
 
 def _propagate_to_boundary(df_combined, ref_x_daily, target_km):
-    """Propagate combined data to a fixed boundary using per-day reference X."""
+    """Propagate combined data to a fixed boundary using per-day reference X.
+
+    Each day is propagated with a 3-hour pad from the previous day so that
+    the ballistic time-shift doesn't leave NaN gaps at the start of each day.
+    """
+    _PAD = pd.Timedelta(hours=3)
     all_dates = sorted(set(df_combined.index.date))
     frames = []
 
@@ -211,22 +221,31 @@ def _propagate_to_boundary(df_combined, ref_x_daily, target_km):
         x_ref = ref_x_daily.get(date, 1.5e6)
         day_start = pd.Timestamp(date)
         day_end = day_start + pd.Timedelta(days=1)
-        day_mask = ((df_combined.index >= day_start) &
-                    (df_combined.index < day_end))
-        df_day = df_combined.loc[day_mask].copy()
 
-        if df_day.empty or df_day['Ux'].isna().all():
-            frames.append(df_day)
+        # Include a pad before the day so interpolation has context.
+        pad_start = day_start - _PAD
+        pad_mask = ((df_combined.index >= pad_start) &
+                    (df_combined.index < day_end))
+        df_padded = df_combined.loc[pad_mask].copy()
+
+        if df_padded.empty or df_padded['Ux'].isna().all():
+            day_mask = ((df_combined.index >= day_start) &
+                        (df_combined.index < day_end))
+            frames.append(df_combined.loc[day_mask].copy())
             continue
 
-        df_day = df_day.rename(
+        df_padded = df_padded.rename(
             columns={'Ux': 'Vx Velocity, km/s, GSE'})
         orbit = pd.Series({'X_GSE': x_ref})
         df_prop = ballistic_propagation(
-            orbit, df_day, target_x_km=target_km)
+            orbit, df_padded, target_x_km=target_km)
         df_prop = df_prop.rename(
             columns={'Vx Velocity, km/s, GSE': 'Ux'})
-        frames.append(df_prop)
+
+        # Slice back to just the target day.
+        day_mask = ((df_prop.index >= day_start) &
+                    (df_prop.index < day_end))
+        frames.append(df_prop.loc[day_mask])
 
     if not frames:
         return df_combined.copy()
@@ -278,6 +297,7 @@ def midl(start, end, raw_dir='L1_raw', boundaries_re=(14, 32)):
             unpropagated=empty,
             propagated={b: empty.copy() for b in boundaries_re},
             ref_x_re={},
+            source_map={},
         )
 
     # Stage 1: Despike.
@@ -316,7 +336,8 @@ def midl(start, end, raw_dir='L1_raw', boundaries_re=(14, 32)):
         data_map, master_grid)
 
     print('Combining temperature...')
-    df_combined['T'] = combine_temperature(data_map, master_grid)
+    df_combined['T'], t_source = combine_temperature(data_map, master_grid)
+    source_map['T'] = t_source
 
     # Stage 5: Smooth transitions.
     print('Smoothing transitions...')
@@ -350,9 +371,16 @@ def midl(start, end, raw_dir='L1_raw', boundaries_re=(14, 32)):
     # Convert reference positions from km back to Re.
     ref_x_re = {date: x_km / 6371.0 for date, x_km in ref_x_daily.items()}
 
+    # Slice source_map to requested range.
+    result_source_map = {}
+    for col, src in source_map.items():
+        src_mask = ((src.index >= result_start) & (src.index < result_end))
+        result_source_map[col] = src.loc[src_mask].copy()
+
     print('Done.')
     return MIDLResult(
         unpropagated=df_combined.loc[mask].copy(),
         propagated=result_propagated,
         ref_x_re=ref_x_re,
+        source_map=result_source_map,
     )

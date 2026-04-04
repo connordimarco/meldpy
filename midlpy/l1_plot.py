@@ -88,18 +88,19 @@ def _slice_day(df, day_str):
 def _load_day_from_csv(data_dir, day_str):
     """Load one day's data from monthly CSV files.
 
-    Reads from data_dir/YYYY/MM/csv/{unpropagated,14Re,32Re}.csv
+    Reads from data_dir/YYYY/MM/csv/YYYYMM_{unpropagated,14Re,32Re}.csv
 
     Returns (df_unpropagated, {b_re: df_propagated}).
     """
     dt = pd.Timestamp(day_str)
+    ym_prefix = f'{dt.year:04d}{dt.month:02d}'
     csv_dir = os.path.join(data_dir, f'{dt.year:04d}', f'{dt.month:02d}', 'csv')
 
     df_comb = pd.DataFrame()
     prop_dfs = {}
 
     for fname in ('unpropagated', '14Re', '32Re'):
-        path = os.path.join(csv_dir, f'{fname}.csv')
+        path = os.path.join(csv_dir, f'{ym_prefix}_{fname}.csv')
         if not os.path.exists(path):
             continue
         df = pd.read_csv(path, index_col='timestamp', parse_dates=True)

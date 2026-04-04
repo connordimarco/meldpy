@@ -76,7 +76,17 @@ def combine_temperature(data_map, master_grid):
     log_median = log_df.median(axis=1, skipna=True)
     out = np.where(df.notna().any(axis=1), np.exp(log_median), np.nan)
 
+    # Track which satellites contributed each minute.
+    sat_codes = {'ace': 1, 'dscovr': 2, 'wind': 3}
+    t_source = [None] * len(master_grid)
+    for i in range(len(master_grid)):
+        contribs = frozenset(
+            sat_codes[sat] for sat in ('ace', 'dscovr', 'wind')
+            if pd.notna(sat_T[sat].iloc[i]))
+        t_source[i] = contribs if contribs else None
+    t_source = pd.Series(t_source, index=master_grid)
+
     combined = pd.Series(out, index=master_grid)
     # Step 4: final 3-pt rolling median smooths minute-level residual noise.
     combined = pd.Series(median_filter_3(combined.values), index=master_grid)
-    return combined
+    return combined, t_source

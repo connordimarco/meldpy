@@ -4,13 +4,12 @@ l1_quality.py
 Plasma quality assessment for all three L1 satellites (ACE, DSCOVR, WIND).
 
 Produces per-satellite, per-variable, per-timestep boolean bad-masks.
-Five checks are applied per satellite:
+Four checks are applied per satellite:
 
   1. Flat-plateau detection   — stuck/near-constant instrument readings
   2. Outlier detection        — flags odd-one-out when 2-of-3 satellites agree
-  3. Physical-range check     — values outside physically plausible bounds
-  4. NaN-fraction check       — high missing-data rate in rolling window
-  5. Near-zero clearing       — Uy/Uz pinned near zero (DSCOVR only)
+  3. NaN-fraction check       — high missing-data rate in rolling window
+  4. Near-zero clearing       — Uy/Uz pinned near zero (DSCOVR only)
 
 Main entry point: ``score_all_plasma()``.
 """
@@ -142,40 +141,7 @@ def check_outlier_satellite(df_ace, df_dsc, df_wind, variables=None):
 
 
 # ---------------------------------------------------------------------------
-# 3. Physical range checks
-# ---------------------------------------------------------------------------
-
-_PHYSICAL_BOUNDS = {
-    'Ux':  {'min': -2500.0, 'max': -150.0},   # must flow Earthward
-    'Uy':  {'min': -200.0,  'max': 200.0},
-    'Uz':  {'min': -200.0,  'max': 200.0},
-    'rho': {'min': 0.1,     'max': 100.0},
-}
-
-
-def check_physical_range(df_dsc, variables=None):
-    """Flag DSCOVR values outside physically plausible bounds.
-
-    Returns dict[str, pd.Series] mapping variable name -> bad mask (True=bad).
-    """
-    if variables is None:
-        variables = list(_PHYSICAL_BOUNDS.keys())
-
-    masks = {}
-    for var in variables:
-        if var not in _PHYSICAL_BOUNDS:
-            continue
-        if var not in df_dsc.columns or df_dsc[var].isna().all():
-            masks[var] = pd.Series(False, index=df_dsc.index)
-            continue
-        bounds = _PHYSICAL_BOUNDS[var]
-        bad = (df_dsc[var] < bounds['min']) | (df_dsc[var] > bounds['max'])
-        masks[var] = bad.fillna(False)
-    return masks
-
-
-# ---------------------------------------------------------------------------
-# 4. NaN-fraction (data-gap) metric
+# 3. NaN-fraction (data-gap) metric
 # ---------------------------------------------------------------------------
 
 def check_nan_fraction(df_dsc, variables=None, window=60, threshold=0.5):
@@ -202,7 +168,7 @@ def check_nan_fraction(df_dsc, variables=None, window=60, threshold=0.5):
 
 
 # ---------------------------------------------------------------------------
-# 5. Near-zero Uy/Uz (legacy check, moved here from l1_combine)
+# 4. Near-zero Uy/Uz (legacy check, moved here from l1_combine)
 # ---------------------------------------------------------------------------
 
 def check_near_zero(df_dsc, variables=None, atol=0.5):
@@ -233,7 +199,7 @@ def score_all_plasma(df_ace, df_dsc, df_wind):
     """Evaluate plasma quality for every satellite, variable, and minute.
 
     Flags the odd-one-out when the other two satellites agree
-    (outlier detection), plus per-satellite physical-range, NaN-fraction,
+    (outlier detection), plus per-satellite NaN-fraction,
     flat-plateau, and near-zero checks.
 
     Returns
@@ -259,7 +225,6 @@ def score_all_plasma(df_ace, df_dsc, df_wind):
 
     all_bad = {}
     for code, df_target in sat_dfs.items():
-        range_m = check_physical_range(df_target, PLASMA_VARS)
         nan_m = check_nan_fraction(df_target, PLASMA_VARS)
 
         # Flat-plateau applies to all satellites (any instrument can get stuck).
@@ -274,7 +239,7 @@ def score_all_plasma(df_ace, df_dsc, df_wind):
             composite = pd.Series(False, index=idx)
             if var in outlier_masks.get(code, {}):
                 composite = composite | outlier_masks[code][var]
-            for masks in [range_m, nan_m, plateau_m, zero_m]:
+            for masks in [nan_m, plateau_m, zero_m]:
                 if var in masks:
                     composite = composite | masks[var]
             bad[var] = composite
