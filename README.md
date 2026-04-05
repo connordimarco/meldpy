@@ -58,17 +58,18 @@ flowchart TD
         ST  --> SL
     end
 
-    subgraph PROP["l1_propagation.py — Ballistic Propagation"]
-        BP["Propagate to boundary\nΔt = ΔX / Ux · causality enforced"]
+    OUT[/"Monthly output\ndata / YYYY/MM / csv + dat"/]
+
+    subgraph PROP["Ballistic Propagation — l1_propagation.py"]
+        BP["Propagate to boundary\nΔt = ΔX / Ux\ncausality enforced"]
     end
 
-    OUT[/"Monthly output\ndata / YYYY/MM / csv + dat"/]
     IMF14[/"Propagated to 14 Re"/]
     IMF32[/"Propagated to 32 Re"/]
 
     L1R --> LD
     SL  --> OUT
-    SL  --> BP
+    SL  --> PROP
     BP  --> IMF14
     BP  --> IMF32
 ```
