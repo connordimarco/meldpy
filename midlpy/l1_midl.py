@@ -15,8 +15,7 @@ from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
 
-from .l1_combine import combine_data_priority
-from .l1_combine_T import combine_temperature
+from .l1_combine import combine_data_priority, combine_temperature
 from .l1_filters import despike, interpolate_with_limits, smooth_transitions, INTERP_LIMITS
 from .l1_propagation import ballistic_propagation
 from .l1_readers import read_l1_data

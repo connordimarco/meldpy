@@ -1,6 +1,6 @@
 # Multi-Satellite Integrated Dataset from L1 (MIDL)
 
-Downloads, quality-screens, and combines 1-minute solar wind from **ACE**, **DSCOVR**, and **WIND** into merged time series. Full algorithm description in the accompanying manuscript.
+Downloads, quality-screens, and combines 1-minute solar wind from **ACE**, **DSCOVR**, and **WIND** into merged time series.
 
 ---
 
@@ -39,7 +39,7 @@ flowchart TD
 
         VS["Satellite source selection\nB: coupled via |B| magnitude  all 3 components from same satellite\nUy  Uz: coupled via |Vt|  both from same satellite\nUx  rho: selected independently\nPlasma: quality bad-masks applied before selection\nMagnetic field: bypasses quality gate\n3 satellites agree within threshold  →  median of all three\n2 satellites agree within threshold  →  mean of closest agreeing pair\nNone agree  →  fallback: closest to previous output  WIND at startup\n  locked source switches only after 3 consecutive minutes of preference"]
 
-        subgraph TC["combine_temperature()  ·  l1_combine_T.py"]
+        subgraph TC["combine_temperature()  ·  l1_combine.py"]
             T1["① 3-point median  per satellite\nremoves single-minute spikes in each T stream"]
             T2["② Log-std spikiness filter  per satellite\nrolling 11-minute window  ·  log-std > 0.5 → NaN\nrejects DSCOVR multi-minute oscillation episodes"]
             T3["③ Geometric median across available satellites\nexp  median  log T\nno threshold  ·  no source-switching  ·  single code path\n2 sats → geometric mean  ·  3 sats → log-space middle value"]
@@ -75,6 +75,48 @@ flowchart TD
     BP  --> IMF14
     BP  --> IMF32
 ```
+---
+
+## File Inventory
+
+| File | Role |
+|---|---|
+| `l1_midl.py` | **Primary entry point**: `midl(start, end)` continuous pipeline, returns `MIDLResult` |
+| `l1_writers.py` | Output formatters: `write_monthly_outputs()` (CSV + DAT) |
+| `l1_plot.py` | Debugging plots: `plot_day()`, `plot_variable()` |
+| `l1_pipeline.py` | Download, resample, coordinate rotation, and per-satellite raw `.dat` output |
+| `l1_combine.py` | Source selection, satellite merging, and temperature combining logic |
+| `l1_quality.py` | Quality checks and `score_all_plasma()` |
+| `l1_filters.py` | `despike()`, `smooth_transitions()`, `median_filter_3()`, `interpolate_with_limits()` |
+| `l1_propagation.py` | Ballistic travel-time propagation with causality enforcement |
+| `l1_readers.py` | CDF and gzipped NetCDF readers; ASCII `.dat` reader |
+| `l1_downloaders.py` | CDAWeb and NOAA NGDC download helpers |
+
+---
+
+## Output Layout
+
+### Raw per-satellite output
+
+`L1_raw/YYYY/MM/DD/`
+
+| File | Description |
+|---|---|
+| `L1_ace.dat` | ACE 1-min stream before filtering |
+| `L1_dscovr.dat` | DSCOVR 1-min stream before filtering |
+| `L1_wind.dat` | WIND 1-min stream before filtering |
+
+### Monthly pipeline output
+
+`data/YYYY/MM/{csv,dat}/`
+
+| File | Description |
+|---|---|
+| `YYYYMM_unpropagated.{csv,dat}` | Merged stream at reference satellite position. Includes `X_Re` and source provenance columns (`B_source`, `Ux_source`, `Uyz_source`, `rho_source`, `T_source`). Source values are satellite codes: 1=ACE, 2=DSCOVR, 3=WIND, concatenated (e.g. `13` = ACE+WIND). |
+| `YYYYMM_14Re.{csv,dat}` | Combined stream propagated to 14 Re |
+| `YYYYMM_32Re.{csv,dat}` | Combined stream propagated to 32 Re |
+
+Column layout is compatible with SWMF/BATS-R-US upstream input readers.
 
 ---
 
@@ -89,3 +131,20 @@ flowchart TD
 DSCOVR plasma is taken from NOAA NGDC because the CDAWeb Faraday cup plasma product ends around 2019.
 
 > **Note:** GSE→GSM coordinate rotation uses spacepy's IGRF geomagnetic field model, which has a finite validity window (currently through 2030 with IGRF14). Processing dates beyond this range requires updating spacepy to a version with newer IGRF coefficients.
+
+---
+
+## Methodology
+
+Full algorithm description in the accompanying manuscript. For tunable parameters, see below.
+
+---
+
+## Tunable Parameters
+
+- Quality thresholds: module-level constants in `l1_quality.py`
+- Agreement thresholds (when satellites "agree"): `_switch_threshold()` in `l1_combine.py`
+- Fallback hysteresis: `_SWITCH_MIN = 3` in `_select_column_with_continuity()` in `l1_combine.py`
+- Transition smoothing: `_CMAX_DEFAULT`, `_WMAX_DEFAULT`, `_RATE_DEFAULT` in `l1_filters.py`
+- Filter behavior: `despike()` in `l1_filters.py`
+- Temperature combiner: `combine_temperature()` in `l1_combine.py`

@@ -1,40 +1,24 @@
 """
 l1_combine.py
 -------------
-Combines per-satellite L1 .dat files into a single merged output.
+Combines per-satellite data into a single merged output.
 
 Core responsibilities:
-  - Fills short intra-satellite gaps before merging.
   - Calls score_all_plasma() to obtain per-satellite quality bad-masks.
   - Selects the best available source for every variable/minute using
     agreement-first rules plus previous-value continuity fallback.
-  - Writes L1_combined.dat (with nSat provenance) and
-    ballistically propagated products (IMF_14Re.dat, IMF_32Re.dat).
-  - Optionally uses prev_day / next_day context to warm up rolling filters
-    across day boundaries before slicing today's data for output.
+  - Combines temperature via geometric median in log-space.
 
-Public entry point: create_combined_l1_files()
+Public functions: combine_data_priority(), combine_temperature()
 """
-import os
-from datetime import datetime
-
 import numpy as np
 import pandas as pd
 
-from .l1_combine_T import combine_temperature
-from .l1_filters import smooth_transitions, interpolate_with_limits, INTERP_LIMITS
-from .l1_propagation import ballistic_propagation
+from .l1_filters import smooth_transitions, median_filter_3
 from .l1_quality import score_all_plasma
-from .l1_readers import read_l1_data
 
 
 SAT_CODE = {'ace': 1, 'dscovr': 2, 'wind': 3}
-
-
-def _fill_short_gaps(df, max_gap=2):
-    if df.empty:
-        return df
-    return df.interpolate(method='time', limit=max_gap, limit_area='inside')
 
 
 def _switch_threshold(col):
@@ -209,34 +193,6 @@ def _apply_source_to_components(source_series, component_sat_series, index):
     return pd.Series(out, index=index)
 
 
-def _read_sat_positions(pos_file):
-    """Return per-satellite noon X positions in km from L1_satpos.dat.
-
-    Returns dict with keys 'ace', 'dscovr', 'wind'. Missing values are NaN.
-    """
-    result = {'ace': np.nan, 'dscovr': np.nan, 'wind': np.nan}
-    if not os.path.exists(pos_file):
-        return result
-    try:
-        with open(pos_file, 'r', encoding='utf-8') as f:
-            data_started = False
-            for line in f:
-                if line.strip().startswith('#START'):
-                    data_started = True
-                    continue
-                if not data_started:
-                    continue
-                parts = line.split()
-                if len(parts) >= 15:
-                    result['ace']    = float(parts[6])  * 6371.0
-                    result['dscovr'] = float(parts[9])  * 6371.0
-                    result['wind']   = float(parts[12]) * 6371.0
-                    break
-    except Exception as e:
-        print(f'  Warning: Could not read position file ({e}).')
-    return result
-
-
 def combine_data_priority(data_map, master_grid):
     # Align each satellite to the same timeline before merging.
     def _dedup_and_reindex(df, grid):
@@ -333,191 +289,80 @@ def combine_data_priority(data_map, master_grid):
     return df_combined, provenance, source_map
 
 
-def create_combined_l1_files(day, prev_day=None, next_day=None,
-                             boundaries_re=(14, 32)):
-    """Build combined L1 products for *day* using rolling neighbour context.
+# ---------------------------------------------------------------------------
+# Temperature combiner
+# ---------------------------------------------------------------------------
+# T is handled separately from B and plasma because:
+#   - It spans orders of magnitude, making threshold-based quality checks unreliable.
+#   - Real propagation delays between spacecraft look identical to sensor disagreement.
+#   - ACE SWE proton T, WIND thermal-speed-derived T, and DSCOVR PLASMAG T have
+#     different calibrations that routinely disagree by 2-3x.
+#
+# Strategy:
+#   1. Per-satellite 3-point median to remove single-minute spikes.
+#   2. Per-satellite spikiness filter: if a satellite's T has high rolling log-std
+#      over an 11-minute window (> 0.5), those minutes are excluded.
+#   3. Per-minute geometric median across available satellites:
+#        exp(median(log(T_values)))
+#   4. Final 3-point rolling median on the combined result.
 
-    When *prev_day* and/or *next_day* are supplied the quality-scoring,
-    satellite-selection, and despiking algorithms run over the full
-    multi-day window so that day-boundary artefacts (cold-start of rolling
-    filters, etc.) are eliminated.  Only the portion corresponding to *day*
-    is written to disk.
+# Rolling log-std threshold above which a satellite's T is considered too noisy
+# to contribute to the combination. Evaluated over an 11-minute window.
+_T_SPIKY_LOG_STD = 0.5
+_T_SPIKY_WINDOW = 11
+
+
+def combine_temperature(data_map, master_grid):
+    """Merge proton temperature across ACE, DSCOVR, and WIND.
+
+    Parameters
+    ----------
+    data_map : dict[str, pd.DataFrame]
+        Per-satellite DataFrames keyed by 'ace', 'dscovr', 'wind'.
+        Each must contain a 'T' column.
+    master_grid : pd.DatetimeIndex
+        Target 1-minute time grid.
+
+    Returns
+    -------
+    pd.Series
+        Combined temperature on master_grid.
     """
-    dt_start = datetime.strptime(day, '%Y-%m-%d')
-    output_dir = dt_start.strftime('L1/%Y/%m/%d')
-    os.makedirs(output_dir, exist_ok=True)
-    satellites = ['ace', 'dscovr', 'wind']
-    numeric_cols = ['Bx', 'By', 'Bz', 'Ux', 'Uy', 'Uz', 'rho', 'T']
-
-    # ---- Gather context-window days in chronological order ----
-    context_days = []
-    if prev_day:
-        context_days.append(prev_day)
-    context_days.append(day)
-    if next_day:
-        context_days.append(next_day)
-
-    data_map = {}
-    print(
-        f"\nProcessing L1 data for {day}  (context window: {context_days})...")
-
-    # Load per-satellite .dat files for every day in the window.
-    for sat in satellites:
-        frames = []
-        for d in context_days:
-            dt_d = datetime.strptime(d, '%Y-%m-%d')
-            d_dir = dt_d.strftime('L1/%Y/%m/%d')
-            fname = os.path.join(d_dir, f'L1_{sat}.dat')
-            df = read_l1_data(fname)
-            if not df.empty:
-                frames.append(df[numeric_cols])
-        if frames:
-            combined = pd.concat(frames).sort_index()
-            data_map[sat] = combined[~combined.index.duplicated(keep='first')]
-
-    if not data_map:
-        print('No satellite data found. Skipping.')
-        return
-
-    # ---- Gap-fill across day boundaries using the full context window ----
-    # Stage 1 fills gaps within each day but can't bridge trailing/leading
-    # edges where the adjacent day provides the missing bracket.  Now that
-    # all three days are loaded together we re-apply the same per-variable
-    # limits so those cross-midnight gaps are filled before any merging.
-    for sat in list(data_map.keys()):
-        data_map[sat] = interpolate_with_limits(data_map[sat], INTERP_LIMITS)
-
-    # ---- Build a master grid spanning the full context window ----
-    window_start = pd.Timestamp(context_days[0])
-    window_end = pd.Timestamp(context_days[-1]) + pd.Timedelta(days=1)
-    n_minutes = int((window_end - window_start).total_seconds() / 60)
-    master_grid = pd.date_range(start=window_start, periods=n_minutes,
-                                freq='1min')
-
-    # ---- Propagate satellites to a common reference position ----
-    # Find the satellite closest to Earth (smallest X) and shift all others
-    # forward in time to that X before combining.  This ensures the combine
-    # step compares measurements of the same solar-wind parcel.
-    pos_file = os.path.join(output_dir, 'L1_satpos.dat')
-    sat_x_km = _read_sat_positions(pos_file)
-
-    available_x = {sat: sat_x_km[sat]
-                   for sat in data_map
-                   if np.isfinite(sat_x_km.get(sat, np.nan))}
-    if available_x:
-        ref_sat = min(available_x, key=lambda s: available_x[s])
-        x_ref_km = available_x[ref_sat]
-        pos_summary = ', '.join(
-            f'{s.upper()}: {available_x[s] / 6371.0:.1f} Re'
-            for s in ('ace', 'dscovr', 'wind') if s in available_x
-        )
-        print(f'  Reference position: {ref_sat.upper()} at '
-              f'{x_ref_km / 6371.0:.1f} Re  ({pos_summary})')
-        for sat, df_sat in list(data_map.items()):
-            x_sat = available_x.get(sat, np.nan)
-            if not np.isfinite(x_sat) or x_sat <= x_ref_km:
-                continue
-            df_renamed = df_sat.rename(
-                columns={'Ux': 'Vx Velocity, km/s, GSE'})
-            orbit = pd.Series({'X_GSE': x_sat})
-            df_prop = ballistic_propagation(
-                orbit, df_renamed, target_x_km=x_ref_km)
-            data_map[sat] = df_prop.rename(
-                columns={'Vx Velocity, km/s, GSE': 'Ux'})
-    else:
-        x_ref_km = 1.5e6
-        print('  No satellite positions available; using default 1.5e6 km.')
-
-    # Quality-score + satellite-select over the full window (B and plasma, not T).
-    df_combined, provenance, source_map = combine_data_priority(data_map, master_grid)
-
-    # Combine T separately: median of available satellites + 3-point median smooth.
-    df_combined['T'] = combine_temperature(data_map, master_grid)
-
-    # Smooth large step changes at source transitions (plasma only).
-    # Applied on the full context window so the smoothing window has data
-    # on both sides of transitions near midnight.
-    # Build per-column boolean mask: True at minutes where the contributing
-    # satellite set changed relative to the previous minute.
-    source_changed = {}
-    for col, src in source_map.items():
-        vals = src.values
-        changed = np.zeros(len(vals), dtype=bool)
-        for k in range(1, len(vals)):
-            if vals[k] is not None and vals[k - 1] is not None:
-                changed[k] = vals[k] != vals[k - 1]
-        source_changed[col] = pd.Series(changed, index=src.index)
-    df_combined = smooth_transitions(df_combined, source_changed=source_changed)
-
-    # ---- Slice out only *today* for file output ----
-    today_start = pd.Timestamp(day)
-    today_end = today_start + pd.Timedelta(days=1)
-    today_mask = (df_combined.index >= today_start) & \
-                 (df_combined.index < today_end)
-    df_today = df_combined.loc[today_mask].copy()
-    prov_today = provenance.loc[today_mask].copy()
-
-    # Final pass: fill any remaining NaN gaps with linear interpolation.
-    df_today = df_today.interpolate(method='linear')
-
-    # Write unpropagated combined file.
-    outfile_comb = os.path.join(output_dir, 'L1_combined.dat')
-    with open(outfile_comb, 'w', encoding='utf-8') as f:
-        f.write(
-            f'Combined L1 Data for {day} (Unpropagated) (GSM nT, km/s, cm^-3, K)\n')
-        f.write('year  mo  dy  hr  mn Bx By Bz Ux Uy Uz rho T nSat\n')
-        f.write('#START\n')
-        for t, row in df_today.iterrows():
-            if pd.isna(row['Bx']):
-                continue
-            n_sat_val = int(prov_today.at[t, 'nSat']) if pd.notna(
-                prov_today.at[t, 'nSat']) else 0
-            f.write(
-                f"{t.year:4d} {t.month:2d} {t.day:2d} {t.hour:2d} {t.minute:2d} "
-                f"{row['Bx']:8.2f} {row['By']:8.2f} {row['Bz']:8.2f} "
-                f"{row['Ux']:9.2f} {row['Uy']:9.2f} {row['Uz']:9.2f} "
-                f"{row['rho']:9.4f} {row['T']:10.1f} {n_sat_val:2d}\n"
+    sat_T = {}
+    for sat in ('ace', 'dscovr', 'wind'):
+        if sat in data_map and 'T' in data_map[sat].columns:
+            s = data_map[sat]['T'].reindex(master_grid)
+            s = s.interpolate(method='time', limit=2, limit_area='inside')
+            # Step 1: per-satellite 3-pt median removes single-minute spikes.
+            s = pd.Series(median_filter_3(s.values), index=master_grid)
+            # Step 2: exclude minutes where this satellite's T is too noisy.
+            log_std = (
+                np.log(s.clip(lower=1))
+                .rolling(_T_SPIKY_WINDOW, center=True, min_periods=5)
+                .std()
             )
-    print(f'Created {outfile_comb}')
+            s = s.where(log_std <= _T_SPIKY_LOG_STD, other=np.nan)
+            sat_T[sat] = s
+        else:
+            sat_T[sat] = pd.Series(np.nan, index=master_grid)
 
-    # x_ref_km was determined during the propagate-to-reference step above.
-    mock_orbit = pd.Series({'X_GSE': x_ref_km})
+    # Step 3: geometric median — median in log-space, exponentiated back.
+    df = pd.DataFrame(sat_T)
+    log_df = np.log(df.clip(lower=1))
+    log_median = log_df.median(axis=1, skipna=True)
+    out = np.where(df.notna().any(axis=1), np.exp(log_median), np.nan)
 
-    # Propagator expects Vx under this legacy column name.
-    # Propagate only today's slice.
-    df_prop_input = df_today.copy()
-    df_prop_input = df_prop_input.rename(
-        columns={'Ux': 'Vx Velocity, km/s, GSE'})
+    # Track which satellites contributed each minute.
+    sat_codes = {'ace': 1, 'dscovr': 2, 'wind': 3}
+    t_source = [None] * len(master_grid)
+    for i in range(len(master_grid)):
+        contribs = frozenset(
+            sat_codes[sat] for sat in ('ace', 'dscovr', 'wind')
+            if pd.notna(sat_T[sat].iloc[i]))
+        t_source[i] = contribs if contribs else None
+    t_source = pd.Series(t_source, index=master_grid)
 
-    if df_today['Ux'].isna().all():
-        print('  No valid Ux — skipping propagation (no satellite data for this day).')
-        return
-
-    # Write one propagated product per requested boundary.
-    for b_re in boundaries_re:
-        target_km = b_re * 6371.0
-        print(f'  -> Propagating to {b_re} Re ({target_km:.0f} km)...')
-
-        df_propagated = ballistic_propagation(
-            mock_orbit, df_prop_input, target_x_km=target_km)
-        df_propagated = df_propagated.rename(
-            columns={'Vx Velocity, km/s, GSE': 'Ux'})
-
-        filename = f'IMF_{b_re}Re.dat'
-        outfile_prop = os.path.join(output_dir, filename)
-
-        with open(outfile_prop, 'w', encoding='utf-8') as f:
-            f.write(
-                f'Propagated L1 Data for {day} (Target: {b_re} Re) (GSM nT, km/s, cm^-3, K)\n')
-            f.write('year mo dy hr mn Bx By Bz Ux Uy Uz rho T\n')
-            f.write('#START\n')
-            for t, row in df_propagated.iterrows():
-                if pd.isna(row['Bx']):
-                    continue
-                f.write(
-                    f"{t.year:4d} {t.month:2d} {t.day:2d} {t.hour:2d} {t.minute:2d} "
-                    f"{row['Bx']:8.2f} {row['By']:8.2f} {row['Bz']:8.2f} "
-                    f"{row['Ux']:9.2f} {row['Uy']:9.2f} {row['Uz']:9.2f} "
-                    f"{row['rho']:9.4f} {row['T']:10.1f}\n"
-                )
-        print(f'    Created {outfile_prop}')
+    combined = pd.Series(out, index=master_grid)
+    # Step 4: final 3-pt rolling median smooths minute-level residual noise.
+    combined = pd.Series(median_filter_3(combined.values), index=master_grid)
+    return combined, t_source

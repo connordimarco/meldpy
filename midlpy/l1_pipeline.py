@@ -3,17 +3,12 @@ l1_pipeline.py
 --------------
 Per-satellite download, processing, and L1 file creation.
 
-Two-phase design:
-  Phase 1 (download): download raw CDF/NC data, resample to 1-min, rotate
-      to GSM, convert units, and write per-satellite files to L1_raw/.
-      Skipped if L1_raw already contains data for the day.
-  Phase 2 (process): read L1_raw, despike, interpolate, and write filtered
-      per-satellite files to L1/.  Re-runnable without re-downloading.
+Downloads raw CDF/NC data, resamples to 1-min, rotates to GSM, converts
+units, and writes per-satellite files to L1_raw/. Skipped if L1_raw
+already contains data for the day.
 
 Public entry points:
-  download_day(day, cda)            -- Phase 1: download + write L1_raw.
-  process_day(day)                  -- Phase 2: L1_raw -> filtered L1/.
-  get_one_day_swmf_input(day, cda)  -- Legacy wrapper (Phase 1 + 2).
+  download_day(day, cda)            -- Download + write L1_raw.
   create_position_file(day, cda)    -- Write L1_satpos.dat (noon positions).
 """
 import glob
@@ -30,8 +25,7 @@ from .l1_downloaders import (
     download_dscovr_ngdc,
     download_position_cdaweb_files,
 )
-from .l1_filters import despike, interpolate_with_limits, INTERP_LIMITS
-from .l1_readers import cdf_to_df, nc_gz_to_df, read_l1_data
+from .l1_readers import cdf_to_df, nc_gz_to_df
 
 
 def gse_to_gsm(df, cols):
@@ -308,55 +302,6 @@ def process_satellite_ngdc(day, data_dir, trange_start, trange_end, cleanup=True
                 print(f'  Could not remove {fpath}: {e}')
 
 
-def process_raw_to_filtered(sat_name, day, raw_base='L1_raw', out_base='L1'):
-    """Phase 2: read a raw file, despike, interpolate, write to out_base/.
-
-    Skips gracefully if the raw file does not exist (satellite had no
-    data for this day).
-
-    Parameters
-    ----------
-    sat_name : str  ('ace' | 'dscovr' | 'wind')
-    day : str  ('YYYY-MM-DD')
-    raw_base : str
-        Root of raw data directory.
-    out_base : str
-        Root of filtered output directory.
-    """
-    dt = datetime.strptime(day, '%Y-%m-%d')
-    raw_path = os.path.join(raw_base, dt.strftime('%Y/%m/%d'),
-                            f'L1_{sat_name}.dat')
-
-    if not os.path.exists(raw_path):
-        print(f'  No raw file for {sat_name} on {day}, skipping filter step.')
-        return
-
-    df = read_l1_data(raw_path)
-    if df.empty:
-        return
-
-    # Keep only the physics columns for filtering.
-    numeric_cols = ['Bx', 'By', 'Bz', 'Ux', 'Uy', 'Uz', 'rho', 'T']
-    df = df[[c for c in numeric_cols if c in df.columns]]
-
-    df_filtered = despike(df)
-    df_filtered = interpolate_with_limits(df_filtered, INTERP_LIMITS)
-
-    output_dir = os.path.join(out_base, dt.strftime('%Y/%m/%d'))
-    os.makedirs(output_dir, exist_ok=True)
-    output_file = os.path.join(output_dir, f'L1_{sat_name}.dat')
-    _write_l1_dat(
-        df_filtered,
-        output_file,
-        f'Produced from {sat_name} L1_raw (filtered)',
-    )
-    print(f'Saved {output_file}')
-
-
-# ---------------------------------------------------------------------------
-# Top-level entry points
-# ---------------------------------------------------------------------------
-
 _SENTINEL_NAME = '.download_complete'
 
 
@@ -440,35 +385,6 @@ def download_day(day, cda, raw_dir='L1_raw'):
     with open(sentinel, 'w') as f:
         f.write(f'Downloaded {day}\n')
     print(f'[download_day] {day}: done.')
-
-
-def process_day(day, raw_dir='L1_raw', out_dir='L1'):
-    """Phase 2: read L1_raw, despike/filter, write per-satellite files to L1/.
-
-    Re-runnable without re-downloading.  Skips satellites that have no
-    L1_raw file (no data available for that day).
-
-    Parameters
-    ----------
-    day : str  ('YYYY-MM-DD')
-    raw_dir : str
-        Root of the raw data directory tree.
-    out_dir : str
-        Root of the filtered output directory tree.
-    """
-    print(f'\n[process_day] Filtering {raw_dir} -> {out_dir} for {day}...')
-    for sat in ('ace', 'dscovr', 'wind'):
-        process_raw_to_filtered(sat, day, raw_base=raw_dir, out_base=out_dir)
-
-
-def get_one_day_swmf_input(day, cda):
-    """Legacy wrapper: download + process all satellites for one day.
-
-    Prefer using download_day() + process_day() separately so that
-    algorithm changes can be re-run without re-downloading.
-    """
-    download_day(day, cda)
-    process_day(day)
 
 
 def create_position_file(day, cda, cleanup_cdfs=True, pos_dir='L1_raw'):
