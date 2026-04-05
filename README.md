@@ -8,47 +8,45 @@ Downloads, quality-screens, and combines 1-minute solar wind from **ACE**, **DSC
 
 ```mermaid
 flowchart TD
-    subgraph PIPE["l1_pipeline.py  —  Per-Satellite Processing"]
-        ACE["ACE · CDAWeb\nAC_H0_MFI  AC_H0_SWE"]
-        DSC["DSCOVR · NOAA NGDC\nm1m · f1m"]
-        WND["WIND · CDAWeb\nWI_H0_MFI  WI_H1_SWE"]
-        DL["Download\nl1_downloaders.py\nCDAWeb API  ·  NOAA NGDC FTP"]
-        RD["Read raw files  ·  l1_readers.py\nCDF  ACE WIND  ·  gzipped NetCDF  DSCOVR"]
-        RS["Resample to 1-minute grid\nGSE→GSM coordinate rotation  gse_to_gsm\nWIND thermal speed → temperature  K"]
-        DS1["despike()  ·  l1_filters.py\n3-point centered median filter\nBx  By  Bz  ·  Ux  Uy  Uz  ·  rho\nshort intra-satellite gaps filled  ≤ 2 min"]
+    subgraph PIPE["l1_pipeline.py — Per-Satellite Processing"]
+        ACE["ACE · CDAWeb"]
+        DSC["DSCOVR · NOAA NGDC"]
+        WND["WIND · CDAWeb"]
+        DL["Download raw CDF / NetCDF\nl1_downloaders.py"]
+        RD["Read and parse raw files\nl1_readers.py"]
+        RS["Resample to 1-min grid\nGSE→GSM rotation · unit conversion"]
+        DS1["Despike: 3-point median filter\nl1_filters.py"]
         ACE & DSC & WND --> DL --> RD --> RS --> DS1
     end
 
-    L1R[/"L1_raw/YYYY/MM/DD/\nL1_ace.dat  ·  L1_dscovr.dat  ·  L1_wind.dat\nper-satellite  ·  untouched pre-filter"/]
-    L1F[/"L1/YYYY/MM/DD/\nL1_ace.dat  ·  L1_dscovr.dat  ·  L1_wind.dat\nfiltered  ·  GSM\nL1_satpos.dat  —  noon satellite positions  Rₑ"/]
+    L1R[/"L1_raw / YYYY/MM/DD /\nper-satellite .dat files"/]
 
     RS  --> L1R
-    DS1 --> L1F
 
-    subgraph COMB["l1_combine.py  —  create_combined_l1_files()"]
-        LD["Load per-satellite .dat files\n±1-day context window\nalign all satellites to common 1-min master grid"]
-        GF["Cross-boundary gap fill  ·  interpolate_with_limits\nper-satellite on full 3-day window\nB ≤ 5 min  ·  plasma ≤ 60 min  ·  T ≤ 60 min\nbridges trailing/leading edges Stage 1 cannot see"]
-        PR["Propagate to common reference position\nread L1_satpos.dat  ·  find satellite closest to Earth  min X\nshift farther satellites forward in time  ballistic_propagation\nall satellites now represent same parcel at x_ref"]
+    subgraph COMB["l1_midl.py — Merge Pipeline"]
+        LD["Load per-satellite .dat files\n+1 day padding for context"]
+        GF["Gap fill per satellite\nB ≤ 5 min · plasma ≤ 60 min"]
+        PR["Propagate to reference position\nballistic shift to nearest satellite"]
 
-        subgraph QC["score_all_plasma()  ·  l1_quality.py  —  plasma only: Ux  Uy  Uz  rho"]
-            Q1["① Outlier detection\nflag odd-one-out when the other two satellites agree\npairwise rolling median  ·  per-variable absolute or ratio threshold"]
-            Q3["② NaN-fraction check\nflag windows where >50% of points are missing\n60-minute rolling window"]
-            Q4["③ Flat-plateau detection\nflag stuck or near-constant instrument readings\nrolling std ≤ threshold  AND  unique-value count ≤ 3"]
-            Q5["④ Near-zero Uy/Uz  —  DSCOVR only\nFaraday-cup transverse-velocity artifact\n|Uy| or |Uz| ≤ 0.5 km/s while non-NaN"]
+        subgraph QC["Plasma Quality — l1_quality.py"]
+            Q1["Outlier detection\n2-of-3 agreement check"]
+            Q3["NaN-fraction check\n60-min rolling window"]
+            Q4["Flat-plateau detection\nstuck instrument readings"]
+            Q5["Near-zero Uy/Uz\nDSCOVR Faraday cup artifact"]
         end
 
-        VS["Satellite source selection\nB: coupled via |B| magnitude  all 3 components from same satellite\nUy  Uz: coupled via |Vt|  both from same satellite\nUx  rho: selected independently\nPlasma: quality bad-masks applied before selection\nMagnetic field: bypasses quality gate\n3 satellites agree within threshold  →  median of all three\n2 satellites agree within threshold  →  mean of closest agreeing pair\nNone agree  →  fallback: closest to previous output  WIND at startup\n  locked source switches only after 3 consecutive minutes of preference"]
+        VS["Source selection\nB: coupled via magnitude\nUy/Uz: coupled via transverse speed\nUx, rho: independent"]
 
-        subgraph TC["combine_temperature()  ·  l1_combine.py"]
-            T1["① 3-point median  per satellite\nremoves single-minute spikes in each T stream"]
-            T2["② Log-std spikiness filter  per satellite\nrolling 11-minute window  ·  log-std > 0.5 → NaN\nrejects DSCOVR multi-minute oscillation episodes"]
-            T3["③ Geometric median across available satellites\nexp  median  log T\nno threshold  ·  no source-switching  ·  single code path\n2 sats → geometric mean  ·  3 sats → log-space middle value"]
-            T4["④ 3-point rolling median  final pass\nremoves residual minute-level noise from combined T"]
+        subgraph TC["Temperature — combine_temperature"]
+            T1["Per-satellite 3-pt median"]
+            T2["Log-std spikiness filter"]
+            T3["Geometric median\nacross satellites"]
+            T4["Final 3-pt median smooth"]
             T1 --> T2 --> T3 --> T4
         end
 
-        ST["smooth_transitions()  ·  l1_filters.py\nboxcar smoothing only at satellite source-switch minutes  plasma only\nC > 20  %  for rho  T  Ux    km/s  for Uy  Uz\nW = round  min  60  C÷5   minutes\nreal solar-wind jumps not smoothed"]
-        SL["Slice combined window to target day\nfill residual NaN gaps  linear interpolation  ≤ 30 min"]
+        ST["Smooth source transitions\nl1_filters.py"]
+        SL["Slice to requested range\nfill residual NaN gaps"]
 
         LD  --> GF
         GF  --> PR
@@ -60,18 +58,18 @@ flowchart TD
         ST  --> SL
     end
 
-    L1C[/"L1/YYYY/MM/DD/  ·  L1_combined.dat\nMerged unpropagated stream"/]
+    OUT[/"Monthly output\ndata / YYYY/MM / csv + dat"/]
 
-    subgraph PROP["l1_propagation.py  —  Ballistic Propagation"]
-        BP["ballistic_propagation()\ntravel time  =  ΔX_GSM  /  Ux\ncausality-enforced monotone time mapping\nfrom x_ref  closest satellite position  to target boundary"]
+    subgraph PROP["l1_propagation.py — Ballistic Propagation"]
+        BP["Propagate to boundary\nΔt = ΔX / Ux · causality enforced"]
     end
 
-    IMF14[/"IMF_14Re.dat  —  boundary at X = −14 Rₑ"/]
-    IMF32[/"IMF_32Re.dat  —  boundary at X = −32 Rₑ"/]
+    IMF14[/"Propagated to 14 Re"/]
+    IMF32[/"Propagated to 32 Re"/]
 
-    L1F --> LD
-    SL  --> L1C
-    L1C --> BP
+    L1R --> LD
+    SL  --> OUT
+    SL  --> BP
     BP  --> IMF14
     BP  --> IMF32
 ```
