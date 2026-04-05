@@ -94,16 +94,6 @@ flowchart TD
 
 ## Output Layout
 
-### Raw per-satellite output
-
-`L1_raw/YYYY/MM/DD/`
-
-| File | Description |
-|---|---|
-| `L1_ace.dat` | ACE 1-min stream before filtering |
-| `L1_dscovr.dat` | DSCOVR 1-min stream before filtering |
-| `L1_wind.dat` | WIND 1-min stream before filtering |
-
 ### Monthly pipeline output
 
 `data/YYYY/MM/{csv,dat}/`
