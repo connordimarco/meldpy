@@ -68,8 +68,8 @@ flowchart TD
     IMF32[/"Propagated to 32 Re"/]
 
     L1R --> LD
-    SL  --> OUT
     SL  --> BP
+    SL  --> OUT
     BP  --> IMF14
     BP  --> IMF32
 ```
