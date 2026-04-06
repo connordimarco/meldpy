@@ -20,6 +20,12 @@ from .l1_quality import score_all_plasma
 
 SAT_CODE = {'ace': 1, 'dscovr': 2, 'wind': 3}
 
+# Variables for which DSCOVR is deprioritized in the 2-satellite fallback.
+# When only DSCOVR + one other satellite are available and they disagree,
+# the non-DSCOVR satellite is chosen instead of using continuity logic.
+_DSCOVR_DEPRIORITIZE_VARS = {'rho', 'T'}
+_DSCOVR_CODE = SAT_CODE['dscovr']  # 2
+
 
 def _switch_threshold(col):
     thresholds = {
@@ -41,12 +47,23 @@ def _agree(v1, v2, col):
     return abs(v1 - v2) <= _switch_threshold(col)
 
 
-def _fallback_source(values, available_codes, prev_value):
+def _fallback_source(values, available_codes, prev_value,
+                     deprioritize_code=None):
     """Fallback source when no pair agrees.
 
     Startup (no previous value): prefer WIND when available.
     Steady-state: choose source closest to previous output value.
+
+    If *deprioritize_code* is set and a non-deprioritized alternative
+    exists, the deprioritized satellite is never selected.
     """
+    if deprioritize_code is not None and deprioritize_code in available_codes:
+        alternatives = [c for c in available_codes if c != deprioritize_code]
+        if alternatives:
+            if len(alternatives) == 1:
+                return alternatives[0]
+            available_codes = alternatives
+
     if np.isfinite(prev_value):
         return min(available_codes, key=lambda c: abs(values[c] - prev_value))
     if 3 in available_codes:
@@ -54,7 +71,8 @@ def _fallback_source(values, available_codes, prev_value):
     return available_codes[0]
 
 
-def _select_column_with_continuity(col, sat_series, bad_masks=None):
+def _select_column_with_continuity(col, sat_series, bad_masks=None,
+                                   deprioritize_code=None):
     """Merge one variable across satellites with continuity and quality logic.
 
     Parameters
@@ -135,7 +153,8 @@ def _select_column_with_continuity(col, sat_series, bad_masks=None):
 
         # Fallback: no agreeing pair.  Use hysteresis to prevent oscillation
         # when two satellites alternate which is slightly closer to prev_value.
-        candidate = _fallback_source(values, available, prev_value)
+        candidate = _fallback_source(values, available, prev_value,
+                                     deprioritize_code=deprioritize_code)
 
         if locked_source is None or locked_source not in available:
             # Cold-start or locked satellite disappeared — accept immediately.
@@ -273,8 +292,10 @@ def combine_data_priority(data_map, master_grid):
     # --- Block C: Independent variables (Ux, rho) --- unchanged logic.
     for col in ('Ux', 'rho'):
         sat_series = _sat_series_for(col)
+        depri = _DSCOVR_CODE if col in _DSCOVR_DEPRIORITIZE_VARS else None
         values, n_sat, source = _select_column_with_continuity(
-            col, sat_series, bad_masks=all_bad_masks)
+            col, sat_series, bad_masks=all_bad_masks,
+            deprioritize_code=depri)
         df_combined[col] = values
         nsat_map[col] = n_sat
         source_map[col] = source
@@ -352,6 +373,16 @@ def combine_temperature(data_map, master_grid):
     log_median = log_df.median(axis=1, skipna=True)
     out = np.where(df.notna().any(axis=1), np.exp(log_median), np.nan)
 
+    # Deprioritize DSCOVR when exactly 2 satellites available (one being
+    # DSCOVR).  The geometric median of 2 values is just their geometric
+    # mean — no outlier rejection.  Use only the non-DSCOVR value.
+    if 'T' in _DSCOVR_DEPRIORITIZE_VARS:
+        n_available = df.notna().sum(axis=1)
+        dscovr_present = df['dscovr'].notna()
+        mask_2sat_dscovr = (n_available == 2) & dscovr_present
+        non_dscovr = df[['ace', 'wind']].bfill(axis=1).iloc[:, 0]
+        out = np.where(mask_2sat_dscovr, non_dscovr.values, out)
+
     # Track which satellites contributed each minute.
     sat_codes = {'ace': 1, 'dscovr': 2, 'wind': 3}
     t_source = [None] * len(master_grid)
@@ -359,6 +390,9 @@ def combine_temperature(data_map, master_grid):
         contribs = frozenset(
             sat_codes[sat] for sat in ('ace', 'dscovr', 'wind')
             if pd.notna(sat_T[sat].iloc[i]))
+        # Remove DSCOVR from provenance when it was deprioritized.
+        if 'T' in _DSCOVR_DEPRIORITIZE_VARS and mask_2sat_dscovr.iloc[i]:
+            contribs = contribs - {_DSCOVR_CODE}
         t_source[i] = contribs if contribs else None
     t_source = pd.Series(t_source, index=master_grid)
 

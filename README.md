@@ -35,27 +35,32 @@ flowchart TD
             Q5["Near-zero Uy/Uz\nDSCOVR Faraday cup artifact"]
         end
 
-        VS["Source selection\nB: coupled via magnitude\nUy/Uz: coupled via transverse speed\nUx, rho: independent"]
+        BSS["B source selection\ncoupled via |B| magnitude\nno quality gate"]
+        PSS["Plasma source selection\nUy/Uz coupled via |Vt|\nUx, rho independent\nDSCOVR rho/T deprioritized"]
 
         subgraph TC["Temperature — combine_temperature"]
-            T1["Per-satellite 3-pt median"]
+            T1["2-min pre-interpolation\n+ per-satellite 3-pt median"]
             T2["Log-std spikiness filter"]
-            T3["Geometric median\nacross satellites"]
+            T3["Geometric median\nacross satellites\nDSCOVR deprioritized when 2-sat"]
             T4["Final 3-pt median smooth"]
             T1 --> T2 --> T3 --> T4
         end
 
         ST["Smooth source transitions\nl1_filters.py"]
-        SL["Slice to requested range\nfill residual NaN gaps"]
+        IP["Post-combine interpolation\n30-min gap fill + final linear"]
+        SL["Slice to requested range"]
 
         LD  --> GF
         GF  --> PR
         PR  --> QC
+        PR  --> BSS
         PR  --> T1
-        Q1 & Q3 & Q4 & Q5 --> VS
-        VS  --> ST
+        Q1 & Q3 & Q4 & Q5 --> PSS
+        BSS --> ST
+        PSS --> ST
         T4  --> ST
-        ST  --> SL
+        ST  --> IP
+        IP  --> SL
     end
 
     OUT[/"Monthly output\ndata / YYYY/MM / csv + dat"/]
@@ -113,7 +118,7 @@ Column layout is compatible with SWMF/BATS-R-US upstream input readers.
 | Satellite | Magnetometer | Plasma | Source |
 |---|---|---|---|
 | ACE | `AC_H0_MFI` (GSM) | `AC_H0_SWE` (GSM) | CDAWeb |
-| DSCOVR | NGDC `m1m` (GSE → GSM) | NGDC `f1m` (GSE → GSM) | NOAA NGDC |
+| DSCOVR | NGDC `m1m` (GSM) | NGDC `f1m` (GSM) | NOAA NGDC |
 | WIND | `WI_H0_MFI` (GSM) | `WI_H1_SWE` (GSE → GSM) | CDAWeb |
 
 DSCOVR plasma is taken from NOAA NGDC because the CDAWeb Faraday cup plasma product ends around 2019.
@@ -136,3 +141,4 @@ Full algorithm description in the accompanying manuscript. For tunable parameter
 - Transition smoothing: `_CMAX_DEFAULT`, `_WMAX_DEFAULT`, `_RATE_DEFAULT` in `l1_filters.py`
 - Filter behavior: `despike()` in `l1_filters.py`
 - Temperature combiner: `combine_temperature()` in `l1_combine.py`
+- DSCOVR deprioritization: `_DSCOVR_DEPRIORITIZE_VARS` in `l1_combine.py` (default: rho, T)

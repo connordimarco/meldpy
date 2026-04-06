@@ -66,7 +66,7 @@ def ballistic_propagation(orbit, raw_data, target_x_km=90000):
     input_df = input_df[~input_df.index.duplicated(keep='first')]
     input_df = input_df.sort_index()
 
-    grid = pd.date_range(raw_data.index.min(), raw_data.index.max(), freq='T')
+    grid = pd.date_range(raw_data.index.min(), raw_data.index.max(), freq='min')
     combined = input_df.index.union(grid)
     result = input_df.reindex(combined).interpolate(
         method='index').reindex(grid)
