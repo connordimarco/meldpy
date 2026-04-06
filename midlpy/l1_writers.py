@@ -111,8 +111,8 @@ def _prepare_datasets(result):
 
 _CSV_PRECISION = {
     'Bx': '%.2f', 'By': '%.2f', 'Bz': '%.2f',
-    'Ux': '%.2f', 'Uy': '%.2f', 'Uz': '%.2f',
-    'rho': '%.4f', 'T': '%.1f', 'X_Re': '%.2f',
+    'Ux': '%.1f', 'Uy': '%.2f', 'Uz': '%.2f',
+    'rho': '%.3f', 'T': '%.0f', 'X_Re': '%.2f',
 }
 
 
@@ -148,7 +148,7 @@ def _write_dat(df, label, year_month_dir, ym_prefix):
         period = df.index[0].strftime('%Y-%m')
         f.write(f'MIDL {label} Data for {period} (GSM nT, km/s, cm^-3, K)\n')
 
-        cols = 'year mo dy hr mn Bx By Bz Ux Uy Uz rho T'
+        cols = 'year month day hour minute Bx By Bz Ux Uy Uz rho T'
         if has_x_re:
             cols += ' X_Re'
         for sc in source_cols:
@@ -187,8 +187,8 @@ def _write_dat(df, label, year_month_dir, ym_prefix):
                 f"{years[i]:4d} {months[i]:2d} {days[i]:2d} "
                 f"{hours[i]:2d} {minutes[i]:2d} "
                 f"{bx[i]:8.2f} {by[i]:8.2f} {bz[i]:8.2f} "
-                f"{ux[i]:9.2f} {uy[i]:9.2f} {uz[i]:9.2f} "
-                f"{rho[i]:9.4f} {temp[i]:10.1f}"
+                f"{ux[i]:9.1f} {uy[i]:9.2f} {uz[i]:9.2f} "
+                f"{rho[i]:9.3f} {temp[i]:10.0f}"
             )
             if has_x_re:
                 line += f" {x_re[i]:9.2f}"

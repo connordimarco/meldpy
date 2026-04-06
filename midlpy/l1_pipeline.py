@@ -63,7 +63,7 @@ def _write_l1_dat(df, output_file, source_label):
     """Write one L1-format ASCII file from a 1-minute DataFrame."""
     with open(output_file, 'w', encoding='utf-8') as f:
         f.write(f'{source_label} (nT, km/s, cm^-3, K)\n')
-        f.write('year  mo  dy  hr  mn Bx By Bz Ux Uy Uz rho T\n')
+        f.write('year month day hour minute Bx By Bz Ux Uy Uz rho T\n')
         f.write('#START\n')
 
         for t, row in df.iterrows():
