@@ -88,19 +88,19 @@ def _slice_day(df, day_str):
 def _load_day_from_csv(data_dir, day_str):
     """Load one day's data from monthly CSV files.
 
-    Reads from data_dir/YYYY/MM/csv/YYYYMM_{unpropagated,14Re,32Re}.csv
+    Reads from data_dir/YYYY/MM/YYYYMM_{unpropagated,14Re,32Re}.csv
 
     Returns (df_unpropagated, {b_re: df_propagated}).
     """
     dt = pd.Timestamp(day_str)
     ym_prefix = f'{dt.year:04d}{dt.month:02d}'
-    csv_dir = os.path.join(data_dir, f'{dt.year:04d}', f'{dt.month:02d}', 'csv')
+    month_dir = os.path.join(data_dir, f'{dt.year:04d}', f'{dt.month:02d}')
 
     df_comb = pd.DataFrame()
     prop_dfs = {}
 
     for fname in ('unpropagated', '14Re', '32Re'):
-        path = os.path.join(csv_dir, f'{ym_prefix}_{fname}.csv')
+        path = os.path.join(month_dir, f'{ym_prefix}_{fname}.csv')
         if not os.path.exists(path):
             continue
         df = pd.read_csv(path, index_col='timestamp', parse_dates=True)
@@ -250,7 +250,7 @@ def plot_day_from_csv(data_dir, day_str, output_dir='plots',
     Parameters
     ----------
     data_dir : str
-        Path to data directory (e.g. 'data') containing YYYY/MM/csv/ files.
+        Path to data directory (e.g. 'data') containing YYYY/MM/ files.
     day_str : str
         Day to plot, e.g. '2024-05-10'.
     output_dir : str

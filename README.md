@@ -47,7 +47,7 @@ flowchart TD
         end
 
         ST["Smooth source transitions\nl1_filters.py"]
-        IP["Post-combine interpolation\n30-min gap fill + final linear"]
+        IP["Post-combine interpolation\nB ≤ 5 min · plasma ≤ 60 min"]
         SL["Slice to requested range"]
 
         LD  --> GF
@@ -101,15 +101,13 @@ flowchart TD
 
 ### Monthly pipeline output
 
-`data/YYYY/MM/{csv,dat}/`
+`data/YYYY/MM/`
 
 | File | Description |
 |---|---|
-| `YYYYMM_unpropagated.{csv,dat}` | Merged stream at reference satellite position. Includes `X_Re` and source provenance columns (`B_source`, `Ux_source`, `Uyz_source`, `rho_source`, `T_source`). Source values are satellite codes: 1=ACE, 2=DSCOVR, 3=WIND, concatenated (e.g. `13` = ACE+WIND). |
-| `YYYYMM_14Re.{csv,dat}` | Combined stream propagated to 14 Re |
-| `YYYYMM_32Re.{csv,dat}` | Combined stream propagated to 32 Re |
-
-Column layout is compatible with SWMF/BATS-R-US upstream input readers.
+| `YYYYMM_unpropagated.csv` | Merged stream at reference satellite position. Includes `X_Re` and source provenance columns (`B_source`, `Ux_source`, `Uyz_source`, `rho_source`, `T_source`). Source values are satellite codes: 1=ACE, 2=DSCOVR, 3=WIND, concatenated (e.g. `13` = ACE+WIND). |
+| `YYYYMM_14Re.csv` | Combined stream propagated to 14 Re |
+| `YYYYMM_32Re.csv` | Combined stream propagated to 32 Re |
 
 ---
 

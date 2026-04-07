@@ -207,7 +207,8 @@ def read_l1_data(filepath):
             for _ in range(1):
                 f.readline()
             header_line = f.readline()
-        has_sc_msc = 'sc' in header_line.split()
+        header_fields = header_line.split()
+        has_sc_msc = 'sc' in header_fields
 
         if has_sc_msc:
             col_names = col_names_legacy
@@ -215,8 +216,10 @@ def read_l1_data(filepath):
             col_names = col_names_new
 
         # Read only canonical physics columns so files can carry extra metadata.
+        # Treat 999999 as NaN (fill value for missing data in DAT output).
         df = pd.read_csv(filepath, sep=r'\s+', names=col_names,
-                         comment='#', skiprows=3, usecols=range(len(col_names)))
+                         comment='#', skiprows=3, usecols=range(len(col_names)),
+                         na_values=['999999'])
     except Exception as e:
         print(f"Error reading {filepath}: {e}")
         return pd.DataFrame()

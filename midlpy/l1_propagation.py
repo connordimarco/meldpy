@@ -7,10 +7,17 @@ Assumes the solar wind travels radially at its measured speed (frozen-in
 approximation).  Enforces causality by discarding parcels that are
 overtaken by faster parcels emitted later.
 
+For timing purposes, Ux is filled with unrestricted interpolation so that
+variables with valid data (e.g. B) are not lost during gaps in plasma.
+The actual Ux values in the output still reflect the original gap structure.
+
 Public entry point: ballistic_propagation()
 """
 import numpy as np
 import pandas as pd
+
+
+VX_COL = 'Vx Velocity, km/s, GSE'
 
 
 def ballistic_propagation(orbit, raw_data, target_x_km=90000):
@@ -33,13 +40,21 @@ def ballistic_propagation(orbit, raw_data, target_x_km=90000):
         Propagated data on a complete 1-minute grid matching the input
         time range.  Arrival times are computed exactly (no rounding),
         then interpolated onto the regular grid so no minutes are dropped.
+        Variables with real data gaps remain NaN; only the timing
+        calculation uses gap-filled Ux.
     """
-    # Work on a copy so callers keep original data.
     input_df = raw_data.copy()
-    # Pull upstream X position and solar-wind speed for timing.
     x_gse = np.float64(orbit['X_GSE'].item())
     target_x_km = np.float64(target_x_km)
-    vx = np.asarray(input_df['Vx Velocity, km/s, GSE'], dtype=np.float64)
+
+    # Build a gap-free Ux for travel-time computation only.
+    # This ensures B (and other vars) are not lost when Ux has gaps.
+    vx_for_timing = input_df[VX_COL].interpolate(method='time')
+    vx = np.asarray(vx_for_timing, dtype=np.float64)
+
+    # Remember which input minutes had NaN Ux (on the original 1-min grid)
+    # so we can restore those gaps in the output after propagation.
+    vx_orig_nan = input_df[VX_COL].isna()
 
     # Ballistic travel time from spacecraft X to target X.
     travel_time_seconds = np.round((x_gse - target_x_km) / vx * (-1))
@@ -59,7 +74,8 @@ def ballistic_propagation(orbit, raw_data, target_x_km=90000):
 
     # Resample onto a regular 1-minute grid.  Arrival times are irregular
     # (not aligned to whole minutes), so we merge them with the target grid
-    # and interpolate to produce a gap-free output.
+    # and interpolate to snap to grid points.  Limit=2 bridges only the
+    # sub-minute jitter from time-shifting; real data gaps pass through as NaN.
     numeric_cols = input_df.select_dtypes(include='number').columns
     input_df = input_df[numeric_cols]
     input_df = input_df[input_df.index.notna()]
@@ -69,6 +85,14 @@ def ballistic_propagation(orbit, raw_data, target_x_km=90000):
     grid = pd.date_range(raw_data.index.min(), raw_data.index.max(), freq='min')
     combined = input_df.index.union(grid)
     result = input_df.reindex(combined).interpolate(
-        method='index').reindex(grid)
+        method='index', limit=2).reindex(grid)
+
+    # Restore NaN in Ux where it was originally missing.
+    # The gap-filled Ux was only for timing, not for output.
+    if VX_COL in result.columns:
+        # Map original NaN mask onto the output grid (same freq, close alignment).
+        vx_nan_on_grid = vx_orig_nan.reindex(grid, method='nearest', tolerance='30s')
+        vx_nan_mask = vx_nan_on_grid.fillna(False).astype(bool)
+        result.loc[vx_nan_mask, VX_COL] = np.nan
 
     return result
