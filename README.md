@@ -1,4 +1,4 @@
-# Merged Interplanetary Dataset from L1 (MIDL)
+# Merged Interplanetary Data from L1 (MIDL)
 
 Downloads, quality-screens, and combines 1-minute solar wind from **ACE**, **DSCOVR**, and **WIND** into merged time series.
 
