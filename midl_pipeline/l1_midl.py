@@ -369,9 +369,6 @@ def midl(start, end, raw_dir='L1_raw', boundaries_re=(14, 32)):
     df_combined = smooth_transitions(
         df_combined, source_changed=source_changed)
 
-    # Final interpolation pass (same per-variable gap limits as pre-combine).
-    df_combined = interpolate_with_limits(df_combined, INTERP_LIMITS)
-
     # Stage 6: Propagate to boundaries.
     propagated = {}
     for b_re in boundaries_re:

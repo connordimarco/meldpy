@@ -300,10 +300,6 @@ def combine_data_priority(data_map, master_grid):
         nsat_map[col] = n_sat
         source_map[col] = source
 
-    # Interpolate short NaN gaps left by quality-gating.
-    df_combined = df_combined.interpolate(
-        method='time', limit=30, limit_area='inside')
-
     return df_combined, source_map
 
 

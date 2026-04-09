@@ -47,7 +47,6 @@ flowchart TD
         end
 
         ST["Smooth source transitions\nl1_filters.py"]
-        IP["Post-combine interpolation\nB ≤ 5 min · plasma ≤ 60 min"]
         SL["Slice to requested range"]
 
         LD  --> GF
@@ -59,14 +58,15 @@ flowchart TD
         BSS --> ST
         PSS --> ST
         T4  --> ST
-        ST  --> IP
-        IP  --> SL
+        ST  --> SL
     end
 
-    OUT[/"Monthly output\ndata / YYYY/MM / csv + dat"/]
+    OUT[/"Monthly output\ndata / YYYY/MM / csv"/]
 
     subgraph PROP["Ballistic Propagation — l1_propagation.py"]
         BP["Propagate to boundary\nΔt = ΔX / Ux\ncausality enforced"]
+        IP["Post-propagation interpolation\nB ≤ 5 min · plasma ≤ 60 min"]
+        BP --> IP
     end
 
     IMF14[/"Propagated to 14 Re"/]
@@ -75,8 +75,8 @@ flowchart TD
     L1R --> LD
     SL  --> OUT
     SL  --> PROP
-    BP  --> IMF14
-    BP  --> IMF32
+    IP  --> IMF14
+    IP  --> IMF32
 ```
 ---
 
@@ -85,7 +85,7 @@ flowchart TD
 | File | Role |
 |---|---|
 | `l1_midl.py` | **Primary entry point**: `midl(start, end)` continuous pipeline, returns `MIDLResult` |
-| `l1_writers.py` | Output formatters: `write_monthly_outputs()` (CSV + DAT) |
+| `l1_writers.py` | Output formatters: `write_monthly_outputs()` (CSV) |
 | `l1_plot.py` | Debugging plots: `plot_day()`, `plot_variable()` |
 | `l1_pipeline.py` | Download, resample, coordinate rotation, and per-satellite raw `.dat` output |
 | `l1_combine.py` | Source selection, satellite merging, and temperature combining logic |
