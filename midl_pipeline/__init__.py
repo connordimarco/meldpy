@@ -1,5 +1,5 @@
 """
-midlpy
+midl_pipeline
 ------
 Multi-satellite solar wind merging pipeline for SWMF/BATS-R-US boundary conditions.
 
