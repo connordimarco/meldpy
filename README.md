@@ -140,3 +140,10 @@ Full algorithm description in the accompanying manuscript. For tunable parameter
 - Filter behavior: `despike()` in `l1_filters.py`
 - Temperature combiner: `combine_temperature()` in `l1_combine.py`
 - DSCOVR deprioritization: `_DSCOVR_DEPRIORITIZE_VARS` in `l1_combine.py` (default: rho, T)
+
+---
+
+## Data Access
+
+- **Website:** [csem.engin.umich.edu/MIDL](https://csem.engin.umich.edu/MIDL/)
+- **Python client:** [CSEM-MIDL](https://github.com/connordimarco/CSEM-MIDL) (`pip install csem-midl`)
