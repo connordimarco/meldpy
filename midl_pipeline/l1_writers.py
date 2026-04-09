@@ -7,7 +7,7 @@ Writes monthly CSV files to:
     output_dir/YYYY/MM/YYYYMM_{L1,14Re,32Re}.csv
 
 Usage:
-    from midlpy import midl, write_monthly_outputs
+    from midl_pipeline import midl, write_monthly_outputs
 
     result = midl('2024-05-09', '2024-05-11')
     write_monthly_outputs(result, output_dir='data')

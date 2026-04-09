@@ -4,7 +4,7 @@ l1_plot.py
 Plotting utilities for MIDLResult objects.
 
 Usage:
-    from midlpy import midl, plot_day, plot_variable
+    from midl_pipeline import midl, plot_day, plot_variable
 
     result = midl('2024-05-09', '2024-05-11')
     plot_day(result, '2024-05-10')
