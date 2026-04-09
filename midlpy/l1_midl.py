@@ -176,6 +176,27 @@ def _propagate_to_reference(data_map, positions):
                 continue
 
             df_day = data_map[sat].loc[day_mask].copy()
+
+            # If Ux is entirely NaN, borrow from another satellite
+            # (or use -400 km/s default) so B data isn't lost.
+            ux_was_all_nan = df_day['Ux'].isna().all()
+            if ux_was_all_nan:
+                donor_ux = None
+                for other in data_map:
+                    if other == sat:
+                        continue
+                    other_day = data_map[other].loc[
+                        (data_map[other].index >= day_start) &
+                        (data_map[other].index < day_end), 'Ux']
+                    if other_day.notna().any():
+                        donor_ux = other_day.reindex(df_day.index).interpolate(
+                            method='time')
+                        break
+                if donor_ux is not None:
+                    df_day['Ux'] = donor_ux
+                else:
+                    df_day['Ux'] = -400.0
+
             df_day = df_day.rename(
                 columns={'Ux': 'Vx Velocity, km/s, GSE'})
             orbit = pd.Series({'X_GSE': x_sat})
@@ -183,6 +204,10 @@ def _propagate_to_reference(data_map, positions):
                 orbit, df_day, target_x_km=x_ref_km)
             df_prop = df_prop.rename(
                 columns={'Vx Velocity, km/s, GSE': 'Ux'})
+
+            # Donor Ux was only for timing — erase it from output.
+            if ux_was_all_nan:
+                df_prop['Ux'] = np.nan
 
             # Replace this day's slice in the full DataFrame.
             data_map[sat] = pd.concat([

@@ -14,8 +14,6 @@ Usage:
 """
 import os
 
-import pandas as pd
-
 
 def write_monthly_outputs(result, output_dir='data'):
     """Write MIDLResult to monthly CSV files.
@@ -84,7 +82,7 @@ def _prepare_datasets(result):
 
     df_unp = result.unpropagated.copy()
     if result.ref_x_re:
-        df_unp['X_Re'] = df_unp.index.map(
+        df_unp['X'] = df_unp.index.map(
             lambda t: result.ref_x_re.get(t.date(), float('nan')))
 
     # Add source provenance columns.
@@ -110,7 +108,7 @@ def _prepare_datasets(result):
 _CSV_PRECISION = {
     'Bx': '%.2f', 'By': '%.2f', 'Bz': '%.2f',
     'Ux': '%.1f', 'Uy': '%.2f', 'Uz': '%.2f',
-    'rho': '%.3f', 'T': '%.0f', 'X_Re': '%.0f',
+    'rho': '%.3f', 'T': '%.0f', 'X': '%.1f',
 }
 
 
