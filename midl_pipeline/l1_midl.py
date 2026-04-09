@@ -356,7 +356,7 @@ def midl(start, end, raw_dir='L1_raw', boundaries_re=(14, 32)):
 
     # Stage 4: Quality score + source select.
     print('Running quality scoring and source selection...')
-    df_combined, _provenance, source_map = combine_data_priority(
+    df_combined, source_map = combine_data_priority(
         data_map, master_grid)
 
     print('Combining temperature...')
@@ -379,6 +379,8 @@ def midl(start, end, raw_dir='L1_raw', boundaries_re=(14, 32)):
         print(f'Propagating to {b_re} Re ({target_km:.0f} km)...')
         propagated[b_re] = _propagate_to_boundary(
             df_combined, ref_x_daily, target_km)
+        propagated[b_re] = interpolate_with_limits(
+            propagated[b_re], INTERP_LIMITS)
 
     # Stage 7: Slice to requested range and return.
     result_start = start.normalize()

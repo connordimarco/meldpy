@@ -21,7 +21,7 @@ import pandas as pd
 
 
 # ---------------------------------------------------------------------------
-# Style constants (from scratch/plot_helpers.py)
+# Style constants
 # ---------------------------------------------------------------------------
 
 SAT_COLORS = {

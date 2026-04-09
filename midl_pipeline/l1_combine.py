@@ -14,7 +14,7 @@ Public functions: combine_data_priority(), combine_temperature()
 import numpy as np
 import pandas as pd
 
-from .l1_filters import smooth_transitions, median_filter_3
+from .l1_filters import median_filter_3
 from .l1_quality import score_all_plasma
 
 
@@ -304,10 +304,7 @@ def combine_data_priority(data_map, master_grid):
     df_combined = df_combined.interpolate(
         method='time', limit=30, limit_area='inside')
 
-    provenance = pd.DataFrame(index=master_grid)
-    provenance['nSat'] = nsat_map['Ux'].astype('Int64')
-
-    return df_combined, provenance, source_map
+    return df_combined, source_map
 
 
 # ---------------------------------------------------------------------------
