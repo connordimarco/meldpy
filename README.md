@@ -146,4 +146,4 @@ Full algorithm description in the accompanying manuscript. For tunable parameter
 ## Data Access
 
 - **Website:** [csem.engin.umich.edu/MIDL](https://csem.engin.umich.edu/MIDL/)
-- **Python client:** [CSEM-MIDL](https://github.com/connordimarco/CSEM-MIDL) (`pip install csem-midl`)
+- **Python client:** [CSEM-MIDL](https://github.com/connordimarco/CSEM-MIDL) 
