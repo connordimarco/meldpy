@@ -4,7 +4,7 @@ l1_writers.py
 Output formatters for MIDLResult objects.
 
 Writes monthly CSV files to:
-    output_dir/YYYY/MM/YYYYMM_{unpropagated,14Re,32Re}.csv
+    output_dir/YYYY/MM/YYYYMM_{L1,14Re,32Re}.csv
 
 Usage:
     from midlpy import midl, write_monthly_outputs
@@ -19,7 +19,7 @@ def write_monthly_outputs(result, output_dir='data'):
     """Write MIDLResult to monthly CSV files.
 
     Creates directory structure:
-        output_dir/YYYY/MM/YYYYMM_{unpropagated,14Re,32Re}.csv
+        output_dir/YYYY/MM/YYYYMM_{L1,14Re,32Re}.csv
 
     For unpropagated data, an X_Re column is added containing the X_GSM
     distance (in Earth radii) of the reference satellite for each day.
@@ -93,7 +93,7 @@ def _prepare_datasets(result):
                 df_unp[out_col] = src.map(
                     lambda fs: _frozenset_to_str(fs) or float('nan'))
 
-    datasets['unpropagated'] = df_unp
+    datasets['L1'] = df_unp
 
     for b_re, df in result.propagated.items():
         datasets[f'{b_re}Re'] = df

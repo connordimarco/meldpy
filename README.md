@@ -105,7 +105,7 @@ flowchart TD
 
 | File | Description |
 |---|---|
-| `YYYYMM_unpropagated.csv` | Merged stream at reference satellite position. Includes `X_Re` and source provenance columns (`B_source`, `Ux_source`, `Uyz_source`, `rho_source`, `T_source`). Source values are satellite codes: 1=ACE, 2=DSCOVR, 3=WIND, concatenated (e.g. `13` = ACE+WIND). |
+| `YYYYMM_L1.csv` | Merged stream at reference satellite position. Includes `X_Re` and source provenance columns (`B_source`, `Ux_source`, `Uyz_source`, `rho_source`, `T_source`). Source values are satellite codes: 1=ACE, 2=DSCOVR, 3=WIND, concatenated (e.g. `13` = ACE+WIND). |
 | `YYYYMM_14Re.csv` | Combined stream propagated to 14 Re |
 | `YYYYMM_32Re.csv` | Combined stream propagated to 32 Re |
 
