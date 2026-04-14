@@ -67,7 +67,8 @@ _IDL_NDOUBLE = 15
 # Public entry point
 # ---------------------------------------------------------------------------
 
-def mhd_propagation(df_combined, ref_x_daily, work_dir=None, batsrus_dir=None):
+def mhd_propagation(df_combined, ref_x_daily, work_dir=None, batsrus_dir=None,
+                    *, allow_partial=False):
     """Run BATSRUS 1D on the continuous combined L1 time series.
 
     Parameters
@@ -86,6 +87,16 @@ def mhd_propagation(df_combined, ref_x_daily, work_dir=None, batsrus_dir=None):
         Path to the built BATSRUS install (the directory containing
         run_mhd/BATSRUS.exe and scripts/PARAM.in.MIDL).  Defaults to
         `MIDL-Pipeline/BATSRUS` relative to the midl_pipeline package.
+    allow_partial : bool
+        If True, a BATSRUS crash mid-run is caught and whatever plot
+        files were written before the crash are still parsed and
+        returned.  The returned Dataset carries
+        ``ds.attrs['batsrus_crashed'] = 1`` and
+        ``ds.attrs['batsrus_crash_info']`` with the tail of the BATSRUS
+        stdout/stderr.  Callers that want to resume past the crash point
+        can re-invoke this function on a sub-slice of df_combined.  If
+        BATSRUS produces no plot files at all, the crash is re-raised
+        regardless of this flag.
 
     Returns
     -------
@@ -135,11 +146,26 @@ def mhd_propagation(df_combined, ref_x_daily, work_dir=None, batsrus_dir=None):
     param_in = os.path.join(run_dir, 'PARAM.in')
     _render_param_in(param_template, param_in, sim_start, sim_end)
 
-    # Run BATSRUS.
-    _run_batsrus(batsrus_exe, run_dir)
+    # Run BATSRUS.  In allow_partial mode, a mid-run crash is captured
+    # and we fall through to plot-file parsing so whatever snapshots
+    # were written before the abort are still recovered.
+    crash_info = None
+    try:
+        _run_batsrus(batsrus_exe, run_dir)
+    except RuntimeError as e:
+        if not allow_partial:
+            raise
+        crash_info = str(e)
 
     # Parse plot files -> xr.Dataset over the padded time range.
-    ds = _parse_plot_files(run_dir, sim_start)
+    try:
+        ds = _parse_plot_files(run_dir, sim_start)
+    except RuntimeError:
+        if crash_info is not None:
+            raise RuntimeError(
+                'BATSRUS crashed and produced no recoverable plot files.\n'
+                f'{crash_info}')
+        raise
 
     # Cleanup scratch .idl files (2-3 GB/year, not kept).
     _cleanup_plot_files(run_dir)
@@ -160,6 +186,10 @@ def mhd_propagation(df_combined, ref_x_daily, work_dir=None, batsrus_dir=None):
             arr = ds[var].values
             arr[mask_aligned.values, :] = np.nan
             ds[var] = (('time', 'x'), arr)
+
+    if crash_info is not None:
+        ds.attrs['batsrus_crashed'] = 1
+        ds.attrs['batsrus_crash_info'] = crash_info
 
     return ds
 
