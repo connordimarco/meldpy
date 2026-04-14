@@ -1,9 +1,12 @@
 # Downloaded CDF/NetCDF source data
 cdf_temp/
 
-# Data 
+# Data
 L1/
 L1_raw/
+
+# BATSRUS build artifact (set up via scripts/setup_batsrus.sh)
+BATSRUS/
 
 # Claude Code 
 .claude/

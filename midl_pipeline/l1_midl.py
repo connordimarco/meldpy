@@ -44,11 +44,18 @@ class MIDLResult:
         Per-variable source provenance. Each Series contains frozenset of
         satellite codes (1=ACE, 2=DSCOVR, 3=WIND) at each minute.
         Keys: Bx, By, Bz, Ux, Uy, Uz, rho, T.
+    mhd_profile : xr.Dataset or None
+        1D MHD-propagated solar wind profile produced by BATSRUS when
+        'mhd' is enabled in the `propagation` kwarg of midl().  Has dims
+        (time, x) with x spanning roughly 31..235 Re (native BATSRUS
+        grid), data vars Bx/By/Bz/Ux/Uy/Uz/rho/T, plus a
+        per-minute mask_interpolated bool.  None when MHD is disabled.
     """
     unpropagated: pd.DataFrame
     propagated: dict
     ref_x_re: dict
     source_map: dict
+    mhd_profile: "object" = None
 
 
 # ---------------------------------------------------------------------------
@@ -280,7 +287,8 @@ def _propagate_to_boundary(df_combined, ref_x_daily, target_km):
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def midl(start, end, raw_dir='L1_raw', boundaries_re=(14, 32)):
+def midl(start, end, raw_dir='L1_raw', boundaries_re=(14, 32),
+         propagation=('ballistic',), batsrus_dir=None, mhd_work_dir=None):
     """Process L1 solar wind data for [start, end].
 
     Reads raw satellite data and position files from raw_dir/, applies
@@ -298,6 +306,18 @@ def midl(start, end, raw_dir='L1_raw', boundaries_re=(14, 32)):
         L1_satpos.dat files (raw_dir/YYYY/MM/DD/).
     boundaries_re : tuple of int
         Propagation target distances in Earth radii. Default (14, 32).
+    propagation : tuple of str
+        Propagation methods to run.  'ballistic' runs the existing
+        per-boundary ballistic time-shift.  'mhd' runs BATSRUS 1D and
+        stores the full profile in MIDLResult.mhd_profile.  Defaults to
+        ('ballistic',) for backwards compatibility.
+    batsrus_dir : str or None
+        Path to the built BATSRUS install used by the 'mhd' method.
+        Defaults to `MIDL-Pipeline/BATSRUS` resolved relative to the
+        midl_pipeline package.  Ignored when 'mhd' not in `propagation`.
+    mhd_work_dir : str or None
+        Scratch directory for the BATSRUS run.  A fresh tempdir is
+        allocated if None.  Ignored when 'mhd' not in `propagation`.
 
     Returns
     -------
@@ -322,6 +342,7 @@ def midl(start, end, raw_dir='L1_raw', boundaries_re=(14, 32)):
             propagated={b: empty.copy() for b in boundaries_re},
             ref_x_re={},
             source_map={},
+            mhd_profile=None,
         )
 
     # Stage 1: Despike.
@@ -379,6 +400,15 @@ def midl(start, end, raw_dir='L1_raw', boundaries_re=(14, 32)):
         propagated[b_re] = interpolate_with_limits(
             propagated[b_re], INTERP_LIMITS)
 
+    # Stage 6b: 1D MHD propagation (optional).
+    mhd_profile = None
+    if 'mhd' in propagation:
+        print('Running 1D MHD propagation (BATSRUS)...')
+        from .l1_mhd import mhd_propagation
+        mhd_profile = mhd_propagation(
+            df_combined, ref_x_daily,
+            work_dir=mhd_work_dir, batsrus_dir=batsrus_dir)
+
     # Stage 7: Slice to requested range and return.
     result_start = start.normalize()
     result_end = (end + pd.Timedelta(days=1)).normalize()
@@ -400,10 +430,16 @@ def midl(start, end, raw_dir='L1_raw', boundaries_re=(14, 32)):
         src_mask = ((src.index >= result_start) & (src.index < result_end))
         result_source_map[col] = src.loc[src_mask].copy()
 
+    # Slice MHD profile to requested range (same window as ballistic).
+    if mhd_profile is not None:
+        mhd_profile = mhd_profile.sel(
+            time=slice(result_start, result_end - pd.Timedelta(minutes=1)))
+
     print('Done.')
     return MIDLResult(
         unpropagated=df_combined.loc[mask].copy(),
         propagated=result_propagated,
         ref_x_re=ref_x_re,
         source_map=result_source_map,
+        mhd_profile=mhd_profile,
     )
