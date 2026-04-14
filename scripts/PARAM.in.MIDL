@@ -19,10 +19,10 @@ F			UseB0
 F			DoSaveRestart
 
 #GRID
-25			nRootBlockX
+27			nRootBlockX
 1			nRootBlockY
 1			nRootBlockZ
--0.5                    xMin
+-20.5                   xMin
 +249.5                  xMax
  -1.                    yMin
  +1.                    yMax
