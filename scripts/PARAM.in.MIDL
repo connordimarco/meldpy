@@ -2,7 +2,7 @@
 MIDL 1D MHD propagation (templated from Param/EARTH/PARAM.in.L1toBC)
 
 #COORDSYSTEM
-GSE			NameCoordSystem
+GSM			NameCoordSystem
 
 #B0
 F			UseB0
