@@ -49,7 +49,8 @@ class MIDLResult:
         'mhd' is enabled in the `propagation` kwarg of midl().  Has dims
         (time, x) with x spanning roughly 31..235 Re (native BATSRUS
         grid), data vars Bx/By/Bz/Ux/Uy/Uz/rho/T, plus a
-        per-minute mask_interpolated bool.  None when MHD is disabled.
+        No NaN masking — BATSRUS output is kept everywhere.  None when
+        MHD is disabled.
     """
     unpropagated: pd.DataFrame
     propagated: dict
@@ -401,13 +402,82 @@ def midl(start, end, raw_dir='L1_raw', boundaries_re=(14, 32),
             propagated[b_re], INTERP_LIMITS)
 
     # Stage 6b: 1D MHD propagation (optional).
+    # Uses a restart loop: if BATSRUS crashes mid-run, recover whatever
+    # plot files were written, skip past the crashing minute, and relaunch
+    # on the remaining tail.  Segments are concatenated at the end.
     mhd_profile = None
     if 'mhd' in propagation:
         print('Running 1D MHD propagation (BATSRUS)...')
         from .l1_mhd import mhd_propagation
-        mhd_profile = mhd_propagation(
-            df_combined, ref_x_daily,
-            work_dir=mhd_work_dir, batsrus_dir=batsrus_dir)
+        import xarray as xr
+
+        _MAX_RESTART = 10
+        _RESTART_SKIP = pd.Timedelta(minutes=2)
+        _MIN_REMAINING = pd.Timedelta(hours=2)
+
+        segments = []
+        crash_infos = []
+        remaining_start = df_combined.index[0]
+        tail_end = df_combined.index[-1]
+
+        for attempt in range(_MAX_RESTART):
+            if remaining_start > tail_end:
+                break
+            if (tail_end - remaining_start) < _MIN_REMAINING:
+                break
+
+            sub = df_combined.loc[remaining_start:]
+            ref_sub = {d: v for d, v in ref_x_daily.items()
+                       if d >= remaining_start.date()}
+            if not ref_sub:
+                ref_sub = ref_x_daily
+
+            try:
+                ds_seg = mhd_propagation(
+                    sub, ref_sub,
+                    work_dir=mhd_work_dir, batsrus_dir=batsrus_dir,
+                    allow_partial=True)
+            except RuntimeError as e:
+                crash_infos.append(f'unrecoverable: {e}')
+                print(f'  MHD unrecoverable crash: {e}')
+                break
+
+            crashed = bool(ds_seg.attrs.get('batsrus_crashed', 0))
+            if crashed:
+                info = ds_seg.attrs.get('batsrus_crash_info', '')
+                crash_infos.append(info)
+                print(f'  MHD crash at attempt {attempt+1}, '
+                      f'recovered {len(ds_seg.time)} minutes')
+
+            if len(ds_seg.time) > 0:
+                segments.append(ds_seg)
+                t_last = pd.Timestamp(ds_seg.time.values[-1])
+            else:
+                break
+
+            if not crashed:
+                break
+
+            remaining_start = t_last + _RESTART_SKIP
+
+        if segments:
+            if len(segments) == 1:
+                mhd_profile = segments[0]
+            else:
+                mhd_profile = xr.concat(segments, dim='time')
+                _, uniq_idx = np.unique(
+                    mhd_profile.time.values, return_index=True)
+                mhd_profile = mhd_profile.isel(time=np.sort(uniq_idx))
+
+            # Reindex onto full 1-min grid so gaps appear as NaN.
+            full_index = pd.date_range(
+                df_combined.index[0], df_combined.index[-1], freq='1min')
+            mhd_profile = mhd_profile.reindex(time=full_index)
+
+            if crash_infos:
+                print(f'  MHD completed with {len(crash_infos)} crash(es)')
+        else:
+            print('  WARNING: MHD produced no recoverable output.')
 
     # Stage 7: Slice to requested range and return.
     result_start = start.normalize()

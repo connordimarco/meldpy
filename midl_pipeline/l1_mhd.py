@@ -10,9 +10,9 @@ Public entry point: mhd_propagation()
 Notes
 -----
 BATSRUS cannot ingest NaN in the inflow file, so gaps are unbounded-
-interpolated before writing L1.dat.  A per-minute boolean mask tracks
-which minutes were filled; the same minutes are re-NaN'd across all x
-cells in the returned Dataset so consumers never see fill-only MHD data.
+interpolated before writing L1.dat.  The MHD solution is kept everywhere
+— even at gap-filled input minutes, BATSRUS produces a physics-based
+solution informed by the surrounding valid data.
 
 Each year's run uses a fresh initial condition (uniform flow), which
 produces transient spin-up artifacts in the first ~tens of minutes.
@@ -104,7 +104,6 @@ def mhd_propagation(df_combined, ref_x_daily, work_dir=None, batsrus_dir=None,
         Dimensions: (time, x)
         Coords:     time (1-min cadence), x (Re)
         Data vars:  Bx, By, Bz, Ux, Uy, Uz, rho, T  (shape [time, x])
-                    mask_interpolated (bool, shape [time])
     """
     if df_combined.empty:
         raise ValueError('df_combined is empty — nothing to propagate.')
@@ -128,7 +127,7 @@ def mhd_propagation(df_combined, ref_x_daily, work_dir=None, batsrus_dir=None,
     run_dir = _stage_run_dir(run_template_dir, work_dir)
 
     # Build the unbounded-filled inflow frame + spin-up pad.
-    df_filled, mask_interpolated = _fill_for_mhd(df_combined)
+    df_filled = _fill_for_mhd(df_combined)
     df_padded, real_start = _prepend_spinup_pad(df_filled, _SPINUP)
 
     # The L1.dat header TIMEDELAY is 0, so the #STARTTIME in PARAM.in
@@ -174,19 +173,6 @@ def mhd_propagation(df_combined, ref_x_daily, work_dir=None, batsrus_dir=None,
     # first real minute.
     ds = ds.sel(time=slice(real_start, None))
 
-    # Align mask_interpolated to ds.time (same 1-min grid) and apply it:
-    # NaN out every x cell at masked minutes.
-    mask_aligned = mask_interpolated.reindex(
-        pd.DatetimeIndex(ds.time.values), fill_value=False)
-    ds = ds.assign(mask_interpolated=('time', mask_aligned.values.astype(bool)))
-
-    # Broadcast mask to NaN across x for the 8 numeric vars.
-    for var in _NUMERIC_COLS:
-        if var in ds:
-            arr = ds[var].values
-            arr[mask_aligned.values, :] = np.nan
-            ds[var] = (('time', 'x'), arr)
-
     if crash_info is not None:
         ds.attrs['batsrus_crashed'] = 1
         ds.attrs['batsrus_crash_info'] = crash_info
@@ -199,12 +185,10 @@ def mhd_propagation(df_combined, ref_x_daily, work_dir=None, batsrus_dir=None,
 # ---------------------------------------------------------------------------
 
 def _fill_for_mhd(df):
-    """Unbounded interpolation + ffill/bfill, tracking which minutes were filled.
+    """Unbounded interpolation + ffill/bfill so BATSRUS gets a gap-free inflow.
 
     BATSRUS will not tolerate a single NaN in L1.dat, so we must fill
-    every gap regardless of length.  The mask flags any minute that had
-    NaN in ANY of the 8 variables before fill; consumers should discard
-    those minutes in the MHD output.
+    every gap regardless of length.
     """
     df = df.copy()
 
@@ -213,17 +197,13 @@ def _fill_for_mhd(df):
     if missing:
         raise KeyError(f'df_combined missing columns: {missing}')
 
-    # Boolean per-minute mask: True wherever ANY column was NaN.
-    mask = df[_NUMERIC_COLS].isna().any(axis=1)
-
     # Unbounded time-based interpolation, then edge fill.
     filled = df[_NUMERIC_COLS].interpolate(
         method='time', limit_direction='both')
     filled = filled.ffill().bfill()
 
     # If a column is still all-NaN (e.g. whole range missing), substitute
-    # a quiet-wind default so BATSRUS runs at all.  These minutes are
-    # already flagged in `mask`.
+    # a quiet-wind default so BATSRUS runs at all.
     _DEFAULTS = {
         'Bx': 0.0, 'By': 0.0, 'Bz': 0.0,
         'Ux': -400.0, 'Uy': 0.0, 'Uz': 0.0,
@@ -232,10 +212,9 @@ def _fill_for_mhd(df):
     for col, default in _DEFAULTS.items():
         if filled[col].isna().any():
             filled[col] = filled[col].fillna(default)
-            mask |= df[col].isna()
 
     df[_NUMERIC_COLS] = filled
-    return df, mask
+    return df
 
 
 def _prepend_spinup_pad(df, pad):
