@@ -47,7 +47,8 @@ _KB = 1.380649e-23            # J/K
 _AMU_CC_TO_M3 = 1.0e6         # amu/cc * (1e6 cc/m^3) -> amu/m^3  (==n/m^3)
 _NPA_TO_PA = 1.0e-9
 _RE_KM = 6371.0
-_OPENMPI_PATH = '/usr/lib64/openmpi/bin'
+_OPENMPI_PATH = os.environ.get('MIDL_OPENMPI_PATH', '/usr/lib64/openmpi/bin')
+_MPIRUN = os.environ.get('MIDL_MPIRUN', 'mpirun -np 1')
 _SPINUP = pd.Timedelta(hours=1)
 
 # IDL record layout: offsets into the 15-double cell record
@@ -364,7 +365,10 @@ def _run_batsrus(batsrus_exe, run_dir, timeout=None):
     env['PATH'] = _OPENMPI_PATH + os.pathsep + env.get('PATH', '')
 
     # Use a shell wrapper so `ulimit -s unlimited` applies to the child.
-    cmd = f'ulimit -s unlimited && ./BATSRUS.exe'
+    # Launch via mpirun because OpenMPI (4.x+) refuses to bootstrap in a
+    # SLURM allocation without a PMI-aware launcher (MPI_Init_thread fails
+    # on "NULL communicator"). `-np 1` is a single-rank BATSRUS 1D run.
+    cmd = f'ulimit -s unlimited && {_MPIRUN} ./BATSRUS.exe'
     try:
         subprocess.run(
             cmd, cwd=run_dir, env=env, shell=True, check=True,

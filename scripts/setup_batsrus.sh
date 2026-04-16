@@ -21,8 +21,13 @@ BATSRUS_DIR="$PIPELINE_DIR/BATSRUS"
 RUN_DIR_NAME="run_mhd"
 TEMPLATE_SRC="$SCRIPT_DIR/PARAM.in.MIDL"
 
-# Put openmpi on PATH for Config.pl and make
-export PATH="/usr/lib64/openmpi/bin:${PATH}"
+# Put openmpi on PATH for Config.pl and make. On the old csem cluster OpenMPI
+# lived at /usr/lib64/openmpi/bin. On Great Lakes it's provided via the module
+# system (`module load gcc/13.2.0 openmpi/4.1.6`) — if mpif90 is already on
+# PATH from a module load, don't clobber it.
+if ! command -v mpif90 >/dev/null 2>&1; then
+    export PATH="/usr/lib64/openmpi/bin:${PATH}"
+fi
 
 echo "[setup_batsrus] PIPELINE_DIR = $PIPELINE_DIR"
 echo "[setup_batsrus] BATSRUS_DIR  = $BATSRUS_DIR"
@@ -69,6 +74,9 @@ fi
 #    the default spacepy/CDF sizes expected by BATSRUS share routines.
 #  - CFLAG needs -cpp (enable preprocessor) and -ffree-line-length-none
 #    (some share/*.f90 lines exceed 132 cols and gfortran chokes otherwise).
+#  - gfortran 10+ tightened argument checking; share/Library/src/ModMpiInterfaces.f90
+#    trips rank/type mismatch errors. -fallow-argument-mismatch downgrades those
+#    to warnings. Required on Great Lakes (gfortran 13.2.0).
 # ---------------------------------------------------------------------------
 echo "[setup_batsrus] Step 4: patching Makefile.conf for gfortran..."
 python3 - "$BATSRUS_DIR/Makefile.conf" <<'PYEOF'
@@ -80,8 +88,14 @@ with open(path) as f:
 want_dp = 'DOUBLEPREC = -fdefault-real-8 -fdefault-double-8 -frecord-marker=4'
 text = re.sub(r'^DOUBLEPREC\s*=.*$', want_dp, text, count=1, flags=re.MULTILINE)
 
-want_cflag = 'CFLAG = ${SEARCH} -c -w -cpp -ffree-line-length-none ${DEBUG}'
+want_cflag = 'CFLAG = ${SEARCH} -c -w -cpp -ffree-line-length-none -fallow-argument-mismatch ${DEBUG}'
 text = re.sub(r'^CFLAG\s*=.*$', want_cflag, text, count=1, flags=re.MULTILINE)
+
+# OpenMPI 4.x+ dropped the C++ MPI bindings (libmpi_cxx) from the default
+# build. The stock SWMF Makefile.conf adds -lmpi_cxx which then fails to link
+# on GL. Drop it; BATSRUS doesn't actually use the C++ MPI bindings.
+want_cpplib = 'CPPLIB = -lstdc++'
+text = re.sub(r'^CPPLIB\s*=.*$', want_cpplib, text, count=1, flags=re.MULTILINE)
 
 with open(path, 'w') as f:
     f.write(text)
