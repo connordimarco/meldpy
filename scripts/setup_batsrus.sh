@@ -77,6 +77,9 @@ fi
 #  - gfortran 10+ tightened argument checking; share/Library/src/ModMpiInterfaces.f90
 #    trips rank/type mismatch errors. -fallow-argument-mismatch downgrades those
 #    to warnings. Required on Great Lakes (gfortran 13.2.0).
+#  - CFLAGS is upgraded from stock -O2 to -O3 -march=native -funroll-loops for
+#    ~2x runtime speedup on numerical Fortran. -ffast-math is deliberately NOT
+#    enabled (would relax IEEE handling, can misbehave on extreme MHD values).
 # ---------------------------------------------------------------------------
 echo "[setup_batsrus] Step 4: patching Makefile.conf for gfortran..."
 python3 - "$BATSRUS_DIR/Makefile.conf" <<'PYEOF'
@@ -90,6 +93,14 @@ text = re.sub(r'^DOUBLEPREC\s*=.*$', want_dp, text, count=1, flags=re.MULTILINE)
 
 want_cflag = 'CFLAG = ${SEARCH} -c -w -cpp -ffree-line-length-none -fallow-argument-mismatch ${DEBUG}'
 text = re.sub(r'^CFLAG\s*=.*$', want_cflag, text, count=1, flags=re.MULTILINE)
+
+# Aggressive optimization: -O3 + march=native + loop unrolling. Stock SWMF
+# uses -O2 (via Cflag2) for portability; on a dedicated compute cluster we
+# can lean harder. The BATSRUS src Makefiles compile with ${Cflag2} by
+# default — patching that variable propagates the optimization to the whole
+# build without touching individual source rules.
+want_cflag2 = 'Cflag2  = ${CFLAG} ${PRECISION} ${OPT3} -march=native -funroll-loops'
+text = re.sub(r'^Cflag2\s*=.*$', want_cflag2, text, count=1, flags=re.MULTILINE)
 
 # OpenMPI 4.x+ dropped the C++ MPI bindings (libmpi_cxx) from the default
 # build. The stock SWMF Makefile.conf adds -lmpi_cxx which then fails to link

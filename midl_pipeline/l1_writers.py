@@ -27,8 +27,8 @@ def write_monthly_outputs(result, output_dir='data'):
     distance (in Earth radii) of the reference satellite for each day.
 
     When `result.mhd_profile` is not None, also writes per-Re MHD CSVs
-    to output_dir/YYYY/MM/mhd/YYYYMM_mhd_RRRRe.csv at x = -20, -19,
-    ..., 179, 180 Re (201 files per month).
+    to output_dir/YYYY/MM/mhd/YYYYMM_mhd_RRRRe.csv at x = -70, -69,
+    ..., 69, 70 Re (141 files per month).
 
     Parameters
     ----------
@@ -58,7 +58,7 @@ def write_monthly_outputs(result, output_dir='data'):
 
         print(f'Wrote {n_months} monthly files for {label} to {output_dir}/')
 
-    # MHD profile (optional): per-Re CSVs at x = -20..180 Re.
+    # MHD profile (optional): per-Re CSVs at x = -70..70 Re.
     if getattr(result, 'mhd_profile', None) is not None:
         _write_mhd_monthly(result.mhd_profile, output_dir)
 
@@ -123,14 +123,14 @@ _CSV_PRECISION = {
 
 
 _MHD_FLOAT_VARS = ('Bx', 'By', 'Bz', 'Ux', 'Uy', 'Uz', 'rho', 'T')
-_MHD_RE_SLICES = tuple(range(-20, 181))
+_MHD_RE_SLICES = tuple(range(-70, 71))
 
 
 def _write_mhd_monthly(mhd_ds, output_dir):
     """Split an xr.Dataset by calendar month and write per-Re MHD CSVs.
 
     Writes output_dir/YYYY/MM/mhd/YYYYMM_mhd_RRRRe.csv for each Re in
-    _MHD_RE_SLICES (-20, -19, ..., 179, 180).  Each file has the same
+    _MHD_RE_SLICES (-70, -69, ..., 69, 70).  Each file has the same
     8-column schema and precision as the existing ballistic _14Re/_32Re
     CSVs.
     """
