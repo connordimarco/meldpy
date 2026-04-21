@@ -7,9 +7,8 @@ Downloads, quality-screens, and combines 1-minute solar wind from **ACE**, **DSC
 ## Data Flow
 
 ```mermaid
-flowchart LR
+flowchart TD
     subgraph SAT["Per-satellite processing · l1_pipeline.py"]
-        direction TB
         ACE["ACE (CDAWeb)"]
         DSC["DSCOVR (NOAA NGDC)"]
         WND["WIND (CDAWeb)"]
@@ -20,7 +19,6 @@ flowchart LR
     L1R[/"L1_raw / YYYY/MM/DD /<br/>per-satellite .dat"/]
 
     subgraph MERGE["Merge · l1_midl.py"]
-        direction TB
         GF["Gap-fill per satellite"]
         PR["Shift to reference position"]
         QC["Plasma quality filtering"]
@@ -32,7 +30,6 @@ flowchart LR
     L1CSV[/"YYYYMM_L1.csv<br/>(at reference position)"/]
 
     subgraph PROP["Propagate"]
-        direction TB
         BAL["Ballistic · l1_propagation.py<br/>→ 14 Re, 32 Re"]
         MHD["BATSRUS 1D MHD · l1_mhd.py<br/>→ -70..70 Re (141 slices)"]
     end
@@ -92,7 +89,7 @@ Details of each stage live in the File Inventory and Methodology sections below.
 
 DSCOVR plasma is taken from NOAA NGDC because the CDAWeb Faraday cup plasma product ends around 2019.
 
-> **Note:** GSE→GSM coordinate rotation uses spacepy's IGRF geomagnetic field model, which has a finite validity window (currently through 2030 with IGRF14). Processing dates beyond this range requires updating spacepy to a version with newer IGRF coefficients.
+> **Note:** GSE→GSM coordinate rotation uses spacepy's IGRF geomagnetic field model, which has a finite validity window (currently through 2030 with IGRF14). Processing certain dates requires updating spacepy to a version with newer IGRF coefficients.
 
 ---
 
