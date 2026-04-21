@@ -7,12 +7,13 @@ Downloads, quality-screens, and combines 1-minute solar wind from **ACE**, **DSC
 ## Data Flow
 
 ```mermaid
+%%{init: {'flowchart': {'htmlLabels': true, 'wrappingWidth': 400}}}%%
 flowchart TD
     subgraph SAT["Per-satellite processing · l1_pipeline.py"]
         ACE["ACE (CDAWeb)"]
         DSC["DSCOVR (NOAA NGDC)"]
         WND["WIND (CDAWeb)"]
-        SP["Download · parse · resample to 1-min<br/>GSE→GSM · despike"]
+        SP["&nbsp;&nbsp;&nbsp;&nbsp;Download · parse · resample to 1-min&nbsp;&nbsp;&nbsp;&nbsp;<br/>GSE→GSM · despike"]
         ACE & DSC & WND --> SP
     end
 
@@ -22,7 +23,7 @@ flowchart TD
         GF["Gap-fill per satellite"]
         PR["Shift to reference position"]
         QC["Plasma quality filtering"]
-        SRC["B · plasma · temperature<br/>source selection + combining"]
+        SRC["&nbsp;&nbsp;&nbsp;&nbsp;B · plasma · temperature&nbsp;&nbsp;&nbsp;&nbsp;<br/>source selection + combining"]
         ST["Smooth source transitions"]
         GF --> PR --> QC --> SRC --> ST
     end
@@ -34,7 +35,7 @@ flowchart TD
         MHD["BATSRUS 1D MHD · l1_mhd.py<br/>→ -70..70 Re (141 slices)"]
     end
 
-    OUT[/"Monthly CSVs under data/YYYY/MM/"/]
+    OUT[/"&nbsp;&nbsp;&nbsp;&nbsp;Monthly CSVs under data/YYYY/MM/&nbsp;&nbsp;&nbsp;&nbsp;"/]
 
     SP --> L1R --> GF
     ST --> L1CSV --> OUT
