@@ -86,8 +86,9 @@ def mhd_propagation(df_combined, ref_x_daily, work_dir=None, batsrus_dir=None,
         cleanup of the parent (we only clean the scratch .idl files).
     batsrus_dir : str or None
         Path to the built BATSRUS install (the directory containing
-        run_mhd/BATSRUS.exe and scripts/PARAM.in.MIDL).  Defaults to
-        `MIDL-Pipeline/BATSRUS` relative to the midl_pipeline package.
+        run_mhd/BATSRUS.exe).  Defaults to `MIDL-Pipeline/BATSRUS`
+        relative to the midl_pipeline package.  The PARAM.in.MIDL
+        template is always loaded from the midl_pipeline package.
     allow_partial : bool
         If True, a BATSRUS crash mid-run is caught and whatever plot
         files were written before the crash are still parsed and
@@ -110,15 +111,13 @@ def mhd_propagation(df_combined, ref_x_daily, work_dir=None, batsrus_dir=None,
         raise ValueError('df_combined is empty — nothing to propagate.')
 
     # Resolve paths.
+    pkg_dir = os.path.dirname(os.path.abspath(__file__))
     if batsrus_dir is None:
-        pkg_dir = os.path.dirname(os.path.abspath(__file__))
-        batsrus_dir = os.path.abspath(
-            os.path.join(pkg_dir, '..', 'BATSRUS'))
+        batsrus_dir = os.path.abspath(os.path.join(pkg_dir, '..', 'BATSRUS'))
 
     run_template_dir = os.path.join(batsrus_dir, 'run_mhd')
     batsrus_exe = os.path.join(run_template_dir, 'BATSRUS.exe')
-    scripts_dir = os.path.join(batsrus_dir, '..', 'scripts')
-    param_template = os.path.join(scripts_dir, 'PARAM.in.MIDL')
+    param_template = os.path.join(pkg_dir, 'PARAM.in.MIDL')
 
     if work_dir is None:
         work_dir = tempfile.mkdtemp(prefix='midl_mhd_')

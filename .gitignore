@@ -5,12 +5,8 @@ cdf_temp/
 L1/
 L1_raw/
 
-# BATSRUS build artifact (set up via scripts/setup_batsrus.sh)
+# BATSRUS build artifact
 BATSRUS/
-
-# Claude Code 
-.claude/
-CLAUDE.md
 
 # Python
 __pycache__/
