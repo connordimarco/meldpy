@@ -1,12 +1,14 @@
 # Downloaded CDF/NetCDF source data
 cdf_temp/
 
-# Data
-L1/
+# Raw, Downloaded Data
 L1_raw/
 
 # BATSRUS build
 BATSRUS/
+
+# Developer Files 
+dev/
 
 # Python
 __pycache__/
@@ -16,9 +18,3 @@ dist/
 build/
 .DS_Store
 .vscode/
-
-# log files
-*.log
-
-# Developer Files 
-dev/
