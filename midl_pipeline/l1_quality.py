@@ -4,12 +4,11 @@ l1_quality.py
 Plasma quality assessment for all three L1 satellites (ACE, DSCOVR, WIND).
 
 Produces per-satellite, per-variable, per-timestep boolean bad-masks.
-Four checks are applied per satellite:
+Three checks are applied per satellite:
 
   1. Flat-plateau detection   — stuck/near-constant instrument readings
   2. Outlier detection        — flags odd-one-out when 2-of-3 satellites agree
-  3. NaN-fraction check       — high missing-data rate in rolling window
-  4. Near-zero clearing       — Uy/Uz pinned near zero (DSCOVR only)
+  3. Near-zero clearing       — Uy/Uz pinned near zero (DSCOVR only)
 
 Main entry point: ``score_all_plasma()``.
 """
@@ -225,8 +224,6 @@ def score_all_plasma(df_ace, df_dsc, df_wind):
 
     all_bad = {}
     for code, df_target in sat_dfs.items():
-        nan_m = check_nan_fraction(df_target, PLASMA_VARS)
-
         # Flat-plateau applies to all satellites (any instrument can get stuck).
         # Near-zero Uy/Uz is DSCOVR-specific: it catches a Faraday cup artefact
         # where DSCOVR zeroes transverse velocity; ACE/WIND can legitimately have
@@ -239,7 +236,7 @@ def score_all_plasma(df_ace, df_dsc, df_wind):
             composite = pd.Series(False, index=idx)
             if var in outlier_masks.get(code, {}):
                 composite = composite | outlier_masks[code][var]
-            for masks in [nan_m, plateau_m, zero_m]:
+            for masks in [plateau_m, zero_m]:
                 if var in masks:
                     composite = composite | masks[var]
             bad[var] = composite

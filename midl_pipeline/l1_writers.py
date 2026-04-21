@@ -14,6 +14,8 @@ Usage:
 """
 import os
 
+import pandas as pd
+
 
 def write_monthly_outputs(result, output_dir='data'):
     """Write MIDLResult to monthly CSV files.
@@ -23,6 +25,10 @@ def write_monthly_outputs(result, output_dir='data'):
 
     For unpropagated data, an X_Re column is added containing the X_GSM
     distance (in Earth radii) of the reference satellite for each day.
+
+    When `result.mhd_profile` is not None, also writes per-Re MHD CSVs
+    to output_dir/YYYY/MM/mhd/YYYYMM_mhd_RRRRe.csv at x = -70, -69,
+    ..., 69, 70 Re (141 files per month).
 
     Parameters
     ----------
@@ -51,6 +57,10 @@ def write_monthly_outputs(result, output_dir='data'):
             n_months += 1
 
         print(f'Wrote {n_months} monthly files for {label} to {output_dir}/')
+
+    # MHD profile (optional): per-Re CSVs at x = -70..70 Re.
+    if getattr(result, 'mhd_profile', None) is not None:
+        _write_mhd_monthly(result.mhd_profile, output_dir)
 
 
 def _frozenset_to_str(fs):
@@ -110,6 +120,59 @@ _CSV_PRECISION = {
     'Ux': '%.1f', 'Uy': '%.2f', 'Uz': '%.2f',
     'rho': '%.3f', 'T': '%.0f', 'X': '%.1f',
 }
+
+
+_MHD_FLOAT_VARS = ('Bx', 'By', 'Bz', 'Ux', 'Uy', 'Uz', 'rho', 'T')
+_MHD_RE_SLICES = tuple(range(-70, 71))
+
+
+def _write_mhd_monthly(mhd_ds, output_dir):
+    """Split an xr.Dataset by calendar month and write per-Re MHD CSVs.
+
+    Writes output_dir/YYYY/MM/mhd/YYYYMM_mhd_RRRRe.csv for each Re in
+    _MHD_RE_SLICES (-70, -69, ..., 69, 70).  Each file has the same
+    8-column schema and precision as the existing ballistic _14Re/_32Re
+    CSVs.
+    """
+    if mhd_ds is None or len(mhd_ds.time) == 0:
+        return
+
+    times = pd.DatetimeIndex(mhd_ds.time.values)
+    ym_key = times.strftime('%Y-%m')
+    unique_ym = sorted(set(ym_key))
+
+    n_months = 0
+    n_files = 0
+    for ym in unique_ym:
+        year = int(ym[:4])
+        month = int(ym[5:7])
+        sel_mask = (ym_key == ym)
+        group = mhd_ds.isel(time=sel_mask.nonzero()[0])
+        group_times = pd.DatetimeIndex(group.time.values)
+
+        mhd_dir = os.path.join(
+            output_dir, f'{year:04d}', f'{month:02d}', 'mhd')
+        os.makedirs(mhd_dir, exist_ok=True)
+        ym_prefix = f'{year:04d}{month:02d}'
+
+        for re_val in _MHD_RE_SLICES:
+            sl = group.sel(x=re_val, method='nearest')
+            df = pd.DataFrame(
+                {v: sl[v].values for v in _MHD_FLOAT_VARS if v in sl.data_vars},
+                index=group_times)
+            df.index.name = 'timestamp'
+            path = os.path.join(
+                mhd_dir, f'{ym_prefix}_mhd_{re_val:03d}Re.csv')
+            rounded = df.copy()
+            for col, spec in _CSV_PRECISION.items():
+                if col in rounded.columns:
+                    decimals = int(spec.split('.')[1].rstrip('f'))
+                    rounded[col] = rounded[col].round(decimals)
+            rounded.to_csv(path, date_format='%Y-%m-%dT%H:%M:%S')
+            n_files += 1
+        n_months += 1
+
+    print(f'Wrote {n_files} MHD CSVs across {n_months} months to {output_dir}/')
 
 
 def _write_csv(df, label, year_month_dir, ym_prefix):

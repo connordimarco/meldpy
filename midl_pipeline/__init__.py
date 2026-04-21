@@ -25,6 +25,7 @@ from .l1_midl import midl, MIDLResult
 from .l1_writers import write_monthly_outputs
 from .l1_plot import plot_day, plot_variable, plot_day_from_csv
 from .l1_pipeline import download_day
+from .l1_mhd import mhd_propagation
 
 __all__ = [
     'midl',
@@ -34,4 +35,5 @@ __all__ = [
     'plot_variable',
     'plot_day_from_csv',
     'download_day',
+    'mhd_propagation',
 ]

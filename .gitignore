@@ -1,13 +1,12 @@
 # Downloaded CDF/NetCDF source data
 cdf_temp/
 
-# Data 
+# Data
 L1/
 L1_raw/
 
-# Claude Code 
-.claude/
-CLAUDE.md
+# BATSRUS build artifact
+BATSRUS/
 
 # Python
 __pycache__/

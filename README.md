@@ -7,77 +7,44 @@ Downloads, quality-screens, and combines 1-minute solar wind from **ACE**, **DSC
 ## Data Flow
 
 ```mermaid
+%%{init: {'flowchart': {'htmlLabels': true, 'wrappingWidth': 400}}}%%
 flowchart TD
-    subgraph PIPE["l1_pipeline.py — Per-Satellite Processing"]
-        ACE["ACE · CDAWeb"]
-        DSC["DSCOVR · NOAA NGDC"]
-        WND["WIND · CDAWeb"]
-        DL["Download raw CDF / NetCDF\nl1_downloaders.py"]
-        RD["Read and parse raw files\nl1_readers.py"]
-        RS["Resample to 1-min grid\nGSE→GSM rotation · unit conversion"]
-        DS1["Despike: 3-point median filter\nl1_filters.py"]
-        ACE & DSC & WND --> DL --> RD --> RS --> DS1
+    subgraph SAT["Per-satellite processing · l1_pipeline.py"]
+        ACE["ACE (CDAWeb)"]
+        DSC["DSCOVR (NOAA NGDC)"]
+        WND["WIND (CDAWeb)"]
+        SP["&nbsp;&nbsp;&nbsp;&nbsp;Download · parse · resample to 1-min&nbsp;&nbsp;&nbsp;&nbsp;<br/>GSE→GSM · despike"]
+        ACE & DSC & WND --> SP
     end
 
-    L1R[/"L1_raw / YYYY/MM/DD /\nper-satellite .dat files"/]
+    L1R[/"L1_raw / YYYY/MM/DD /<br/>per-satellite .dat"/]
 
-    RS  --> L1R
-
-    subgraph COMB["l1_midl.py — Merge Pipeline"]
-        LD["Load per-satellite .dat files\n+1 day padding for context"]
-        GF["Gap fill per satellite\nB ≤ 5 min · plasma ≤ 60 min"]
-        PR["Propagate to reference position\nballistic shift to nearest satellite"]
-
-        subgraph QC["Plasma Quality — l1_quality.py"]
-            Q1["Outlier detection\n2-of-3 agreement check"]
-            Q3["NaN-fraction check\n60-min rolling window"]
-            Q4["Flat-plateau detection\nstuck instrument readings"]
-            Q5["Near-zero Uy/Uz\nDSCOVR Faraday cup artifact"]
-        end
-
-        BSS["B source selection\ncoupled via |B| magnitude\nno quality gate"]
-        PSS["Plasma source selection\nUy/Uz coupled via |Vt|\nUx, rho independent\nDSCOVR rho/T deprioritized"]
-
-        subgraph TC["Temperature — combine_temperature"]
-            T1["2-min pre-interpolation\n+ per-satellite 3-pt median"]
-            T2["Log-std spikiness filter"]
-            T3["Geometric median\nacross satellites\nDSCOVR deprioritized when 2-sat"]
-            T4["Final 3-pt median smooth"]
-            T1 --> T2 --> T3 --> T4
-        end
-
-        ST["Smooth source transitions\nl1_filters.py"]
-        SL["Slice to requested range"]
-
-        LD  --> GF
-        GF  --> PR
-        PR  --> QC
-        PR  --> BSS
-        PR  --> T1
-        Q1 & Q3 & Q4 & Q5 --> PSS
-        BSS --> ST
-        PSS --> ST
-        T4  --> ST
-        ST  --> SL
+    subgraph MERGE["Merge · l1_midl.py"]
+        GF["Gap-fill per satellite"]
+        PR["Shift to reference position"]
+        QC["Plasma quality filtering"]
+        SRC["&nbsp;&nbsp;&nbsp;&nbsp;B · plasma · temperature&nbsp;&nbsp;&nbsp;&nbsp;<br/>source selection + combining"]
+        ST["Smooth source transitions"]
+        GF --> PR --> QC --> SRC --> ST
     end
 
-    OUT[/"Monthly output\ndata / YYYY/MM / csv"/]
+    L1CSV[/"YYYYMM_L1.csv<br/>(at reference position)"/]
 
-    subgraph PROP["Ballistic Propagation — l1_propagation.py"]
-        BP["Propagate to boundary\nΔt = ΔX / Ux\ncausality enforced"]
-        IP["Post-propagation interpolation\nB ≤ 5 min · plasma ≤ 60 min"]
-        BP --> IP
+    subgraph PROP["Propagate"]
+        BAL["Ballistic · l1_propagation.py<br/>→ 14 Re, 32 Re"]
+        MHD["BATSRUS 1D MHD · l1_mhd.py<br/>→ -70..70 Re (141 slices)"]
     end
 
-    IMF14[/"Propagated to 14 Re"/]
-    IMF32[/"Propagated to 32 Re"/]
+    OUT[/"&nbsp;&nbsp;&nbsp;&nbsp;Monthly CSVs under data/YYYY/MM/&nbsp;&nbsp;&nbsp;&nbsp;"/]
 
-    L1R --> LD
-    SL  --> OUT
-    SL  --> PROP
-    IP  --> IMF14
-    IP  --> IMF32
+    SP --> L1R --> GF
+    ST --> L1CSV --> OUT
+    ST --> BAL --> OUT
+    ST --> MHD --> OUT
 ```
+
+Details of each stage live in the File Inventory and Methodology sections below.
+
 ---
 
 ## File Inventory
@@ -92,6 +59,7 @@ flowchart TD
 | `l1_quality.py` | Quality checks and `score_all_plasma()` |
 | `l1_filters.py` | `despike()`, `smooth_transitions()`, `median_filter_3()`, `interpolate_with_limits()` |
 | `l1_propagation.py` | Ballistic travel-time propagation with causality enforcement |
+| `l1_mhd.py` | 1D BATSRUS MHD propagation; returns an xarray Dataset on `(time, x)` spanning -70..70 Re |
 | `l1_readers.py` | CDF and gzipped NetCDF readers; ASCII `.dat` reader |
 | `l1_downloaders.py` | CDAWeb and NOAA NGDC download helpers |
 
@@ -106,8 +74,9 @@ flowchart TD
 | File | Description |
 |---|---|
 | `YYYYMM_L1.csv` | Merged stream at reference satellite position. Includes `X_Re` and source provenance columns (`B_source`, `Ux_source`, `Uyz_source`, `rho_source`, `T_source`). Source values are satellite codes: 1=ACE, 2=DSCOVR, 3=WIND, concatenated (e.g. `13` = ACE+WIND). |
-| `YYYYMM_14Re.csv` | Combined stream propagated to 14 Re |
-| `YYYYMM_32Re.csv` | Combined stream propagated to 32 Re |
+| `YYYYMM_14Re.csv` | Combined stream ballistically propagated to 14 Re |
+| `YYYYMM_32Re.csv` | Combined stream ballistically propagated to 32 Re |
+| `mhd/YYYYMM_mhd_<RRR>Re.csv` | 1D BATSRUS MHD solution at a single X slice, one file per integer Re from -70 to +70 (141 files per month). `<RRR>` is a 3-character zero-padded integer — e.g. `000Re`, `032Re`, `-70Re`. |
 
 ---
 
@@ -121,7 +90,7 @@ flowchart TD
 
 DSCOVR plasma is taken from NOAA NGDC because the CDAWeb Faraday cup plasma product ends around 2019.
 
-> **Note:** GSE→GSM coordinate rotation uses spacepy's IGRF geomagnetic field model, which has a finite validity window (currently through 2030 with IGRF14). Processing dates beyond this range requires updating spacepy to a version with newer IGRF coefficients.
+> **Note:** GSE→GSM coordinate rotation uses spacepy's IGRF geomagnetic field model, which has a finite validity window (currently through 2030 with IGRF14). Processing certain dates requires updating spacepy to a version with newer IGRF coefficients.
 
 ---
 
