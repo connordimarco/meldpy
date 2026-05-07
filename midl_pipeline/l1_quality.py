@@ -165,29 +165,6 @@ def check_outlier_satellite(sat_dfs, variables=None):
 # 3. NaN-fraction (data-gap) metric
 # ---------------------------------------------------------------------------
 
-def check_nan_fraction(df_dsc, variables=None, window=60, threshold=0.5):
-    """Flag windows where DSCOVR has > threshold fraction of NaN.
-
-    A high NaN rate suggests the instrument is struggling; surrounding
-    non-NaN points in the same window are also suspect.
-
-    Returns dict[str, pd.Series] mapping variable name -> bad mask (True=bad).
-    """
-    if variables is None:
-        variables = ['Ux', 'Uy', 'Uz', 'rho']
-
-    masks = {}
-    for var in variables:
-        if var not in df_dsc.columns:
-            masks[var] = pd.Series(False, index=df_dsc.index)
-            continue
-        nan_flag = df_dsc[var].isna().astype(float)
-        frac = nan_flag.rolling(
-            window=window, center=True, min_periods=10).mean()
-        masks[var] = (frac > threshold).fillna(False)
-    return masks
-
-
 # ---------------------------------------------------------------------------
 # 4. Near-zero Uy/Uz (legacy check, moved here from l1_combine)
 # ---------------------------------------------------------------------------

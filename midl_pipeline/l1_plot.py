@@ -16,7 +16,6 @@ matplotlib.use('Agg')
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
-import numpy as np
 import pandas as pd
 
 

@@ -265,7 +265,6 @@ def combine_data_priority(data_map, master_grid):
     # T is excluded here — handled separately by combine_temperature().
     cols = ['Bx', 'By', 'Bz', 'Ux', 'Uy', 'Uz', 'rho']
     df_combined = pd.DataFrame(index=master_grid, columns=cols)
-    nsat_map = {}
     source_map = {}   # col -> pd.Series of frozenset(sat_codes)
 
     def _sat_series_for(col):
@@ -284,13 +283,12 @@ def combine_data_priority(data_map, master_grid):
             b_series['By'][sat]**2 +
             b_series['Bz'][sat]**2)
 
-    _, b_nsat, b_source = _select_column_with_continuity(
+    _, _, b_source = _select_column_with_continuity(
         '|B|', mag_b_series, bad_masks=None)
 
     for comp in ('Bx', 'By', 'Bz'):
         df_combined[comp] = _apply_source_to_components(
             b_source, b_series[comp], master_grid)
-        nsat_map[comp] = b_nsat
         source_map[comp] = b_source
 
     # --- Block B: Transverse velocity (Uy, Uz) coupled via |Vt| ---
@@ -309,24 +307,22 @@ def combine_data_priority(data_map, master_grid):
             uz_bad = name_masks.get('Uz', pd.Series(False, index=master_grid))
             vt_bad_masks[code] = {'|Vt|': uy_bad | uz_bad}
 
-    _, vt_nsat, vt_source = _select_column_with_continuity(
+    _, _, vt_source = _select_column_with_continuity(
         '|Vt|', mag_vt_series, bad_masks=vt_bad_masks)
 
     for comp in ('Uy', 'Uz'):
         df_combined[comp] = _apply_source_to_components(
             vt_source, vt_series[comp], master_grid)
-        nsat_map[comp] = vt_nsat
         source_map[comp] = vt_source
 
     # --- Block C: Independent variables (Ux, rho) ---
     for col in ('Ux', 'rho'):
         sat_series = _sat_series_for(col)
         depri = _DSCOVR_CODE if col in _DSCOVR_DEPRIORITIZE_VARS else None
-        values, n_sat, source = _select_column_with_continuity(
+        values, _, source = _select_column_with_continuity(
             col, sat_series, bad_masks=all_bad_masks,
             deprioritize_code=depri)
         df_combined[col] = values
-        nsat_map[col] = n_sat
         source_map[col] = source
 
     return df_combined, source_map

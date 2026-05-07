@@ -130,35 +130,44 @@ def _read_sat_positions(pos_file):
     except Exception as e:
         print(f'  Warning: Could not read position file ({e}).')
 
+    gated = set()
     for sat in result:
         x_re = result[sat] / 6371.0
         if np.isfinite(x_re) and x_re < _MIN_L1_X_RE:
             result[sat] = np.nan
+            gated.add(sat)
 
-    return result
+    return result, gated
 
 
 def _load_positions_range(raw_dir, start, end):
     """Load satellite positions for [start, end] into a dict indexed by date.
 
     Reads L1_satpos.dat from the same raw_dir tree as the satellite data.
-    Returns dict: {date -> {'ace': x_km, 'dscovr': x_km, 'wind': x_km}}.
+    Returns (positions, gated_by_day) where:
+        positions: {date -> {'ace': x_km, 'dscovr': x_km, 'wind': x_km}}
+        gated_by_day: {date -> set of satellite names gated by L1 threshold}
     """
     positions = {}
+    gated_by_day = {}
     for day_str in _day_range(start, end):
         dt = datetime.strptime(day_str, '%Y-%m-%d')
         pos_file = os.path.join(raw_dir, dt.strftime('%Y/%m/%d'),
                                 'L1_satpos.dat')
-        positions[dt.date()] = _read_sat_positions(pos_file)
-    return positions
+        pos, gated = _read_sat_positions(pos_file)
+        positions[dt.date()] = pos
+        gated_by_day[dt.date()] = gated
+    return positions, gated_by_day
 
 
-def _propagate_to_reference(data_map, positions):
+def _propagate_to_reference(data_map, positions, gated_by_day=None):
     """Shift satellites to daily reference position (closest to Earth).
 
     Modifies data_map in place. Returns a dict {date -> x_ref_km} for use
     in final propagation to boundary.
     """
+    if gated_by_day is None:
+        gated_by_day = {}
     ref_x_daily = {}
 
     # Collect all dates that have data.
@@ -181,11 +190,13 @@ def _propagate_to_reference(data_map, positions):
         available_x = {sat: pos[sat] for sat in data_map
                        if np.isfinite(pos.get(sat, np.nan))}
 
-        # Drop data for satellites not at L1 so it doesn't reach combine.
+        # Drop data only for satellites explicitly gated (X < 190 Re),
+        # not for satellites with NaN positions from missing satpos data.
+        gated_today = gated_by_day.get(date, set())
         day_start = pd.Timestamp(date)
         day_end = day_start + pd.Timedelta(days=1)
         for sat in list(data_map.keys()):
-            if sat not in available_x:
+            if sat in gated_today:
                 day_mask = ((data_map[sat].index >= day_start) &
                             (data_map[sat].index < day_end))
                 if day_mask.any():
@@ -386,8 +397,8 @@ def midl(start, end, raw_dir='L1_raw', boundaries_re=(14, 32),
 
     # Stage 3: Propagate to reference position.
     print('Propagating to reference positions...')
-    positions = _load_positions_range(raw_dir, load_start, load_end)
-    ref_x_daily = _propagate_to_reference(data_map, positions)
+    positions, gated_by_day = _load_positions_range(raw_dir, load_start, load_end)
+    ref_x_daily = _propagate_to_reference(data_map, positions, gated_by_day)
 
     # Deduplicate after propagation — time-shifting can create collisions at
     # day boundaries. Keep the fastest parcel (most negative Ux) per minute.
