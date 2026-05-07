@@ -97,8 +97,16 @@ def _load_raw_range(raw_dir, start, end):
     return data_map
 
 
+_MIN_L1_X_RE = 190.0
+
+
 def _read_sat_positions(pos_file):
-    """Read per-satellite noon X positions in km from L1_satpos.dat."""
+    """Read per-satellite noon X positions in km from L1_satpos.dat.
+
+    Satellites with X_GSM < 190 Re are treated as not at L1 (e.g. WIND
+    in the magnetotail pre-2004, DSCOVR in transit Feb 2015) and their
+    position is set to NaN so they are excluded from propagation.
+    """
     result = {'ace': np.nan, 'dscovr': np.nan, 'wind': np.nan, 'solar1': np.nan}
     if not os.path.exists(pos_file):
         return result
@@ -121,6 +129,12 @@ def _read_sat_positions(pos_file):
                     break
     except Exception as e:
         print(f'  Warning: Could not read position file ({e}).')
+
+    for sat in result:
+        x_re = result[sat] / 6371.0
+        if np.isfinite(x_re) and x_re < _MIN_L1_X_RE:
+            result[sat] = np.nan
+
     return result
 
 
@@ -158,7 +172,7 @@ def _propagate_to_reference(data_map, positions):
 
     for date in all_dates:
         pos = positions.get(date)
-        if pos is None:
+        if pos is None or not any(np.isfinite(v) for v in pos.values()):
             pos = last_good_pos if last_good_pos else {
                 sat: np.nan for sat in SATELLITES}
         if any(np.isfinite(v) for v in pos.values()):
@@ -166,6 +180,16 @@ def _propagate_to_reference(data_map, positions):
 
         available_x = {sat: pos[sat] for sat in data_map
                        if np.isfinite(pos.get(sat, np.nan))}
+
+        # Drop data for satellites not at L1 so it doesn't reach combine.
+        day_start = pd.Timestamp(date)
+        day_end = day_start + pd.Timedelta(days=1)
+        for sat in list(data_map.keys()):
+            if sat not in available_x:
+                day_mask = ((data_map[sat].index >= day_start) &
+                            (data_map[sat].index < day_end))
+                if day_mask.any():
+                    data_map[sat] = data_map[sat].loc[~day_mask]
 
         if not available_x:
             ref_x_daily[date] = 1.5e6
@@ -176,8 +200,6 @@ def _propagate_to_reference(data_map, positions):
         ref_x_daily[date] = x_ref_km
 
         # Shift non-reference satellites for this day's data.
-        day_start = pd.Timestamp(date)
-        day_end = day_start + pd.Timedelta(days=1)
 
         for sat in list(data_map.keys()):
             x_sat = available_x.get(sat, np.nan)
